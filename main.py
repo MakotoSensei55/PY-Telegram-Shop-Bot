@@ -264,7 +264,19 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     addr_msg = await context.bot.send_message(chat_id=user_id, text=BITCOIN_ADDRESS)
     context.user_data.setdefault("extra_msgs", []).append(addr_msg.message_id)
 
-    instr_msg = await context.bot.send_message(chat_id=user_id, text=f"ℹ️ Отправьте точно {btc_amount:.8f} BTC на адрес выше.\nКомиссия сети — за ваш счёт.\nБот проверит платёж автоматически.")
+    instr_msg = await context.bot.send_message(
+        chat_id=user_id,
+        text=(
+            f"ℹ️ *Инструкция по оплате:*\n\n"
+            f"1️⃣ Отправьте точно `{btc_amount:.8f}` BTC на адрес выше\n"
+            f"2️⃣ Комиссия сети Bitcoin — за ваш счёт\n"
+            f"3️⃣ Бот проверяет поступление каждые 30 секунд\n"
+            f"4️⃣ Товар будет отправлен *сразу после обнаружения транзакции*\n"
+            f"   (не нужно ждать подтверждений сети)\n\n"
+            f"⚡ *Скорость получения товара: до 1 минуты после отправки*"
+        ),
+        parse_mode="Markdown",
+    )
     context.user_data.setdefault("extra_msgs", []).append(instr_msg.message_id)
 
     asyncio.create_task(check_payment_loop(user_id, context.application))
