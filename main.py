@@ -19,7 +19,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
 
-# Товары хранятся в JSON-файле
 PRODUCTS_FILE = "products.json"
 PENDING_FILE = "pending_orders.json"
 
@@ -73,8 +72,8 @@ async def delete_extra_msgs(context, chat_id: int):
 async def fetch_btc_rate() -> float:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get("https://api.coingecko.com/api/v3/simple/price", params={"ids": "bitcoin", "vs_currencies": "rub"})
-            return float(r.json()["bitcoin"]["rub"])
+            r = await client.get("https://api.coinbase.com/v2/prices/BTC-RUB/spot")
+            return float(r.json()["data"]["amount"])
     except Exception:
         return 0.0
 
@@ -206,8 +205,8 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🛒 Корзина пуста.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
         return
 
-    if user_id in pending_orders:
-        order = pending_orders[user_id]
+    if str(user_id) in pending_orders:
+        order = pending_orders[str(user_id)]
         await query.edit_message_text(
             f"⏳ *У вас уже есть активный заказ*\n\nСумма: `{order['amount_btc']:.8f}` BTC\n\nАдрес кошелька отправлен отдельным сообщением выше.\nОжидаю поступления средств...",
             parse_mode="Markdown",
@@ -573,6 +572,11 @@ def main():
     app.add_handler(CallbackQueryHandler(show_support, pattern="^samples$"))
     app.add_handler(CallbackQueryHandler(show_my_orders, pattern="^my_orders$"))
     app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back$"))
+
+    # Возобновляем проверку сохранённых заказов при перезапуске
+    for uid in list(pending_orders.keys()):
+        asyncio.create_task(check_payment_loop(int(uid), app))
+
     async def error_handler(update, context):
         try:
             if update and update.callback_query:
@@ -581,7 +585,7 @@ def main():
             pass
 
     app.add_error_handler(error_handler)
-    
+
     print("Бот запущен!")
     app.run_polling()
 
