@@ -232,6 +232,30 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    total_rub = sum(p["price"] for p in cart)
+
+    # Бесплатный товар — выдаём сразу без курса и кошелька
+    if total_rub == 0:
+        user_carts[user_id] = []
+        await query.edit_message_text("🎁 Отправляю бесплатный товар...")
+        for product in cart:
+            if product.get("items") and len(product["items"]) > 0:
+                item = product["items"].pop(0)
+                text = item.get("text") or f"🎁 Бесплатный товар «{product['name']}»!"
+                photo = item.get("photo")
+                if len(product["items"]) == 0:
+                    PRODUCTS.remove(product)
+                save_json(PRODUCTS_FILE, PRODUCTS)
+            else:
+                text = f"🎁 Бесплатный товар «{product['name']}»!"
+                photo = None
+            if photo:
+                await context.bot.send_photo(chat_id=user_id, photo=photo, caption=text)
+            else:
+                await context.bot.send_message(chat_id=user_id, text=text)
+        await query.edit_message_text("🎁 Бесплатный товар отправлен!", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
+        return
+
     await query.edit_message_text("⏳ Загружаю текущий курс Bitcoin...")
 
     rate = await fetch_btc_rate()
@@ -239,14 +263,10 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Не удалось получить курс BTC. Попробуйте позже.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
         return
 
-    total_rub = sum(p["price"] for p in cart)
     btc_amount = rub_to_btc(total_rub, rate)
-    if total_rub == 0:
-        btc_amount = 0.0
-    else:
-        btc_amount = round(btc_amount, 5)
-        if btc_amount > 0 and btc_amount < 0.00001::
-            btc_amount = 0.00001
+    btc_amount = round(btc_amount, 5)
+    if btc_amount > 0 and btc_amount < 0.00001:
+        btc_amount = 0.00001
     expected_satoshi = btc_to_satoshi(btc_amount)
     baseline = await get_received_satoshi(BITCOIN_ADDRESS)
 
@@ -314,9 +334,6 @@ async def check_payment_loop(user_id: int, application):
         if received < 0:
             continue
         baseline = order.get("baseline_satoshi", 0)
-        # Для нулевой суммы — сразу выдаём
-        if order["expected_satoshi"] == 0:
-            received = baseline + order["expected_satoshi"]
         tolerance = int(order["expected_satoshi"] * 0.05)
         if received - baseline >= order["expected_satoshi"] - tolerance:
             pending_orders.pop(uid, None)
