@@ -14,7 +14,22 @@ from telegram.ext import (
     filters,
 )
 from telegram.error import BadRequest
+from flask import Flask
+from threading import Thread
 
+app_web = Flask(__name__)
+
+@app_web.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app_web.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_web)
+    t.start()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
@@ -585,7 +600,7 @@ def main():
             pass
 
     app.add_error_handler(error_handler)
-
+    keep_alive()
     print("Бот запущен!")
     app.run_polling()
 
