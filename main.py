@@ -336,8 +336,19 @@ async def check_payment_loop(user_id: int, application):
             save_json(PENDING_FILE, pending_orders)
             await application.bot.send_message(chat_id=user_id, text="✅ *Оплата получена!* Отправляю ваши товары...", parse_mode="Markdown")
             for product in order["cart"]:
-                text = product.get("delivery_text") or f"Спасибо за покупку товара «{product['name']}»!"
-                photo = product.get("delivery_photo")
+                # Берём первый экземпляр из списка
+                if product.get("items") and len(product["items"]) > 0:
+                    item = product["items"].pop(0)  # забираем первый
+                    text = item.get("text") or f"Спасибо за покупку товара «{product['name']}»!"
+                    photo = item.get("photo")
+                    # Если экземпляры кончились — удаляем товар из каталога
+                    if len(product["items"]) == 0:
+                        PRODUCTS.remove(product)
+                    save_json(PRODUCTS_FILE, PRODUCTS)
+                else:
+                    text = f"Спасибо за покупку товара «{product['name']}»!"
+                    photo = None
+
                 if photo:
                     await application.bot.send_photo(chat_id=user_id, photo=photo, caption=text)
                 else:
