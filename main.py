@@ -74,6 +74,15 @@ PRODUCTS = load_json(PRODUCTS_FILE, [
             {"text": "Доступ на год", "photo": None},
         ]
     },
+    {
+        "id": "test",
+        "name": "🧪 Тестовый товар",
+        "price": 0,
+        "items": [
+            {"text": "Тестовый экземпляр 1", "photo": None},
+            {"text": "Тестовый экземпляр 2", "photo": None},
+        ]
+    },
 ])
 
 pending_orders = load_json(PENDING_FILE, {})
