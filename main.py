@@ -245,7 +245,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         btc_amount = 0.0
     else:
         btc_amount = round(btc_amount, 5)
-        if btc_amount < 0.00001:
+        if btc_amount > 0 and btc_amount < 0.00001::
             btc_amount = 0.00001
     expected_satoshi = btc_to_satoshi(btc_amount)
     baseline = await get_received_satoshi(BITCOIN_ADDRESS)
