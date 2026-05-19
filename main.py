@@ -573,7 +573,7 @@ def main():
     app.add_handler(CallbackQueryHandler(show_support, pattern="^samples$"))
     app.add_handler(CallbackQueryHandler(show_my_orders, pattern="^my_orders$"))
     app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back$"))
-async def error_handler(update, context):
+    async def error_handler(update, context):
         try:
             if update and update.callback_query:
                 await update.callback_query.answer()
