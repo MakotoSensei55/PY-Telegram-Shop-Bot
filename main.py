@@ -311,6 +311,9 @@ async def check_payment_loop(user_id: int, application):
         if received < 0:
             continue
         baseline = order.get("baseline_satoshi", 0)
+        # Для нулевой суммы — сразу выдаём
+        if order["expected_satoshi"] == 0:
+            received = baseline + order["expected_satoshi"]
         tolerance = int(order["expected_satoshi"] * 0.05)
         if received - baseline >= order["expected_satoshi"] - tolerance:
             pending_orders.pop(uid, None)
