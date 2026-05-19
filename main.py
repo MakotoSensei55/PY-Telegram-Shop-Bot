@@ -48,9 +48,32 @@ def save_json(filename, data):
         json.dump(data, f)
 
 PRODUCTS = load_json(PRODUCTS_FILE, [
-    {"id": "1", "name": "Стикерпак", "price": 300, "delivery_text": "Спасибо за покупку! Вот ваш стикерпак.", "delivery_photo": None},
-    {"id": "2", "name": "Гайд по Python", "price": 500, "delivery_text": "Спасибо! Вот ваш гайд по Python.", "delivery_photo": None},
-    {"id": "3", "name": "Премиум доступ", "price": 1000, "delivery_text": "Добро пожаловать в премиум!", "delivery_photo": None},
+    {
+        "id": "1",
+        "name": "Стикерпак",
+        "price": 300,
+        "items": [
+            {"text": "Стикерпак №1", "photo": None},
+            {"text": "Стикерпак №2", "photo": None},
+        ]
+    },
+    {
+        "id": "2",
+        "name": "Гайд по Python",
+        "price": 500,
+        "items": [
+            {"text": "Гайд по Python (полный)", "photo": None},
+        ]
+    },
+    {
+        "id": "3",
+        "name": "Премиум доступ",
+        "price": 1000,
+        "items": [
+            {"text": "Доступ на месяц", "photo": None},
+            {"text": "Доступ на год", "photo": None},
+        ]
+    },
 ])
 
 pending_orders = load_json(PENDING_FILE, {})
