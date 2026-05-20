@@ -34,11 +34,10 @@ def keep_alive():
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
-CHANNEL_ID = os.getenv("CHANNEL_ID", "")
+REVIEWS_LINK = "https://t.me/yamadarew"
 
 PRODUCTS_FILE = "products.json"
 PENDING_FILE = "pending_orders.json"
-REVIEWS_FILE = "reviews.json"
 
 def storage(filename, data=None):
     if data is not None:
@@ -57,12 +56,10 @@ PRODUCTS = storage(PRODUCTS_FILE) or [
 ]
 
 pending_orders = storage(PENDING_FILE) or {}
-REVIEWS = storage(REVIEWS_FILE) or []
 user_carts = {}
 
 (ADD_NAME, ADD_PRICE, ADD_DELIVERY_TEXT, ADD_DELIVERY_PHOTO,
- EDIT_SELECT, EDIT_FIELD, EDIT_VALUE_TEXT, EDIT_VALUE_PHOTO,
- REVIEW_STAR, REVIEW_TEXT) = range(10)
+ EDIT_SELECT, EDIT_FIELD, EDIT_VALUE_TEXT, EDIT_VALUE_PHOTO) = range(8)
 
 SATOSHI, ORDER_TIMEOUT = 100_000_000, 3600
 
@@ -98,7 +95,7 @@ def main_menu_keyboard(uid):
     k = [
         [InlineKeyboardButton("🛍 Каталог", callback_data="catalog"), InlineKeyboardButton("🛒 Корзина", callback_data="view_cart")],
         [InlineKeyboardButton("📋 Мои заказы", callback_data="my_orders"), InlineKeyboardButton("🎁 Пробники", callback_data="samples")],
-        [InlineKeyboardButton("💬 Отзывы", callback_data="show_reviews"), InlineKeyboardButton("🆘 Поддержка", callback_data="support")],
+        [InlineKeyboardButton("💬 Отзывы", url=REVIEWS_LINK), InlineKeyboardButton("🆘 Поддержка", callback_data="support")],
     ]
     if is_admin(uid): k.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(k)
@@ -170,8 +167,8 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_carts[uid] = []
         for p in cart: await deliver(uid, p, context)
         await q.edit_message_text("🎁 Бесплатный товар отправлен!", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ Оставить отзыв", callback_data="review_shop")]])
-        await context.bot.send_message(chat_id=uid, text="💬 Понравился магазин? Оставьте отзыв!", reply_markup=kb)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("💬 Оставить отзыв", url=REVIEWS_LINK)]])
+        await context.bot.send_message(chat_id=uid, text="💬 Понравился магазин? Оставьте отзыв в нашем канале!", reply_markup=kb)
         return
     await q.edit_message_text("⏳ Загружаю курс Bitcoin...")
     rate = await fetch_btc_rate()
@@ -220,8 +217,8 @@ async def check_payment_loop(uid, app):
             for aid in ADMIN_IDS:
                 try: await app.bot.send_message(chat_id=aid, text=f"💰 *Новая оплата!*\n\n👤 Покупатель: `{uid}`\n🛒 Товары:\n{cart_text}\n💵 Сумма: {o['amount_rub']} ₽ / `{o['amount_btc']:.8f}` BTC", parse_mode="Markdown")
                 except: pass
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ Оставить отзыв", callback_data="review_shop")]])
-            await app.bot.send_message(chat_id=uid, text="💬 Понравился магазин? Оставьте отзыв!", reply_markup=kb)
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("💬 Оставить отзыв", url=REVIEWS_LINK)]])
+            await app.bot.send_message(chat_id=uid, text="💬 Понравился магазин? Оставьте отзыв в нашем канале!", reply_markup=kb)
             break
 
 async def show_my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -237,89 +234,6 @@ async def show_my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏳ Осталось: {max(0, ORDER_TIMEOUT - int(time.time() - o['created_at'])) // 60} мин.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]]))
-
-# ─── Кнопка Отзывы ведёт в канал ──────────────────────────────────────────
-async def show_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    await q.edit_message_text(
-        "💬 *Отзывы о магазине*\n\n"
-        "Читайте отзывы и общайтесь в нашем канале!",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("💬 Перейти в канал", url="https://t.me/BokuYaba_Reviews")],
-            [HOME_BTN],
-        ]),
-    )
-
-# ─── Оставление отзыва с отправкой в канал ────────────────────────────────
-
-async def review_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    kb = [[InlineKeyboardButton(str(i), callback_data=f"rstars_{i}") for i in range(1, 4)],
-          [InlineKeyboardButton(str(i), callback_data=f"rstars_{i}") for i in range(4, 6)]]
-    await q.edit_message_text("⭐ Поставьте оценку магазину:", reply_markup=InlineKeyboardMarkup(kb))
-    return REVIEW_STAR
-
-async def review_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    context.user_data["stars"] = int(q.data.split("_")[1])
-    context.user_data["star_msg_id"] = q.message.message_id
-    msg = await q.edit_message_text("📝 Напишите текст отзыва (или /skip):")
-    context.user_data["text_prompt_msg_id"] = msg.message_id
-    return REVIEW_TEXT
-
-async def review_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text if update.message else "/skip"
-    if text == "/skip":
-        return await review_skip(update, context)
-    
-    stars = context.user_data.get("stars", 5)
-    user = update.effective_user
-    username = user.username or user.full_name
-    
-    # Удаляем лишние сообщения
-    for msg_id in (context.user_data.pop("star_msg_id", None), context.user_data.pop("text_prompt_msg_id", None)):
-        if msg_id:
-            try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_id)
-            except: pass
-    try: await update.message.delete()
-    except: pass
-    
-    # Сохраняем отзыв
-    REVIEWS.append({"user_id": user.id, "username": username, "stars": stars, "text": text, "date": time.strftime("%Y-%m-%d %H:%M")})
-    storage(REVIEWS_FILE, REVIEWS)
-    
-    # Отправляем в канал
-    if CHANNEL_ID:
-        try: await context.bot.send_message(chat_id=CHANNEL_ID, text=f"{'⭐'*stars} Отзыв от @{username}:\n\n{text}")
-        except: pass
-    
-    await update.message.reply_text("✅ Спасибо за отзыв! Он появится в нашем канале.")
-    return ConversationHandler.END
-
-async def review_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    stars = context.user_data.get("stars", 5)
-    user = update.effective_user
-    username = user.username or user.full_name
-    chat_id = update.effective_chat.id
-    
-    # Удаляем лишние сообщения
-    for msg_id in (context.user_data.pop("star_msg_id", None), context.user_data.pop("text_prompt_msg_id", None)):
-        if msg_id:
-            try: await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            except: pass
-    
-    # Сохраняем отзыв
-    REVIEWS.append({"user_id": user.id, "username": username, "stars": stars, "text": "Без текста", "date": time.strftime("%Y-%m-%d %H:%M")})
-    storage(REVIEWS_FILE, REVIEWS)
-    
-    # Отправляем в канал
-    if CHANNEL_ID:
-        try: await context.bot.send_message(chat_id=CHANNEL_ID, text=f"{'⭐'*stars} Отзыв от @{username}:\n\nБез текста")
-        except: pass
-    
-    await context.bot.send_message(chat_id=chat_id, text="✅ Спасибо за отзыв! Он появится в нашем канале.")
-    return ConversationHandler.END
 
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
@@ -472,21 +386,14 @@ def main():
                 EDIT_VALUE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_edit_value_text)]},
         fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")], per_message=False)
 
-    review_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(review_start, pattern="^review_shop$")],
-        states={REVIEW_STAR: [CallbackQueryHandler(review_star, pattern="^rstars_")],
-                REVIEW_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_text), CommandHandler("skip", review_skip)]},
-        fallbacks=[], per_message=True)
-
     handlers = [
-        CommandHandler("start", start), add_conv, edit_conv, review_conv,
+        CommandHandler("start", start), add_conv, edit_conv,
         CallbackQueryHandler(admin_panel, pattern="^admin_panel$"), CallbackQueryHandler(admin_list, pattern="^adm_list$"),
         CallbackQueryHandler(show_catalog, pattern="^catalog$"), CallbackQueryHandler(add_to_cart, pattern="^add_"),
         CallbackQueryHandler(view_cart, pattern="^view_cart$"), CallbackQueryHandler(clear_cart, pattern="^clear_cart$"),
         CallbackQueryHandler(make_order_btc, pattern="^order_btc$"), CallbackQueryHandler(cancel_order, pattern="^cancel_order$"),
-        CallbackQueryHandler(show_reviews, pattern="^show_reviews$"), CallbackQueryHandler(show_support, pattern="^support$"),
-        CallbackQueryHandler(show_support, pattern="^samples$"), CallbackQueryHandler(show_my_orders, pattern="^my_orders$"),
-        CallbackQueryHandler(back_to_start, pattern="^back$")
+        CallbackQueryHandler(show_support, pattern="^support$"), CallbackQueryHandler(show_support, pattern="^samples$"),
+        CallbackQueryHandler(show_my_orders, pattern="^my_orders$"), CallbackQueryHandler(back_to_start, pattern="^back$")
     ]
     for h in handlers: app.add_handler(h)
 
