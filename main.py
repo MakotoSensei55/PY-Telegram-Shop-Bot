@@ -37,639 +37,396 @@ BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
 
 PRODUCTS_FILE = "products.json"
 PENDING_FILE = "pending_orders.json"
+REVIEWS_FILE = "reviews.json"
 
-def load_json(filename, default):
-    if os.path.exists(filename):
+def storage(filename, data=None):
+    if data is not None:
+        with open(filename, "w") as f:
+            json.dump(data, f)
+    elif os.path.exists(filename):
         with open(filename, "r") as f:
             return json.load(f)
-    return default
+    return None
 
-def save_json(filename, data):
-    with open(filename, "w") as f:
-        json.dump(data, f)
-
-PRODUCTS = load_json(PRODUCTS_FILE, [
+PRODUCTS = storage(PRODUCTS_FILE) or [
     {"id": "1", "name": "Стикерпак", "price": 300, "items": [{"text": "Стикерпак №1", "photo": None}, {"text": "Стикерпак №2", "photo": None}]},
     {"id": "2", "name": "Гайд по Python", "price": 500, "items": [{"text": "Гайд по Python (полный)", "photo": None}]},
     {"id": "3", "name": "Премиум доступ", "price": 1000, "items": [{"text": "Доступ на месяц", "photo": None}, {"text": "Доступ на год", "photo": None}]},
-    {"id": "test", "name": "🧪 Тестовый товар", "price": 0, "items": [{"text": "Тестовый экземпляр 1", "photo": None}, {"text": "Тестовый экземпляр 2", "photo": None}]},
-])
+    {"id": "test", "name": "Тестовый товар", "price": 0, "items": [{"text": "Тестовый экземпляр 1", "photo": None}, {"text": "Тестовый экземпляр 2", "photo": None}]},
+]
 
-pending_orders = load_json(PENDING_FILE, {})
-
+pending_orders = storage(PENDING_FILE) or {}
+REVIEWS = storage(REVIEWS_FILE) or []
 user_carts = {}
 
-(
-    ADD_NAME, ADD_PRICE, ADD_DELIVERY_TEXT, ADD_DELIVERY_PHOTO,
-    EDIT_SELECT, EDIT_FIELD, EDIT_VALUE_TEXT, EDIT_VALUE_PHOTO,
-) = range(8)
+(ADD_NAME, ADD_PRICE, ADD_DELIVERY_TEXT, ADD_DELIVERY_PHOTO,
+ EDIT_SELECT, EDIT_FIELD, EDIT_VALUE_TEXT, EDIT_VALUE_PHOTO,
+ REVIEW_STAR, REVIEW_TEXT) = range(10)
 
-SATOSHI = 100_000_000
-ORDER_TIMEOUT = 3600
-
+SATOSHI, ORDER_TIMEOUT = 100_000_000, 3600
 
 def get_next_id():
-    if not PRODUCTS:
-        return "1"
-    return str(max(int(p["id"]) for p in PRODUCTS) + 1)
+    return str(max(int(p["id"]) for p in PRODUCTS) + 1) if PRODUCTS else "1"
 
+def is_admin(uid): return uid in ADMIN_IDS
 
-def is_admin(user_id: int) -> bool:
-    return user_id in ADMIN_IDS
-
-
-async def delete_extra_msgs(context, chat_id: int):
+async def delete_extra_msgs(context, chat_id):
     for msg_id in context.user_data.pop("extra_msgs", []):
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-        except BadRequest:
-            pass
+        try: await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except BadRequest: pass
 
-
-async def fetch_btc_rate() -> float:
+async def fetch_btc_rate():
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get("https://api.coinbase.com/v2/prices/BTC-RUB/spot")
-            return float(r.json()["data"]["amount"])
-    except Exception:
-        return 0.0
+        async with httpx.AsyncClient(timeout=10) as c:
+            return float((await c.get("https://api.coinbase.com/v2/prices/BTC-RUB/spot")).json()["data"]["amount"])
+    except: return 0.0
 
+def rub_to_btc(rub, rate): return rub / rate if rate > 0 else 0.0
+def btc_to_satoshi(btc): return int(btc * SATOSHI)
 
-def rub_to_btc(rub: int, rate: float) -> float:
-    return rub / rate if rate > 0 else 0.0
-
-
-def btc_to_satoshi(btc: float) -> int:
-    return int(btc * SATOSHI)
-
-
-async def get_received_satoshi(address: str) -> int:
+async def get_received_satoshi(address):
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(f"https://blockstream.info/api/address/{address}")
-            if r.status_code != 200:
-                return -1
-            data = r.json()
-            chain = data.get("chain_stats", {})
-            mempool = data.get("mempool_stats", {})
-            funded = chain.get("funded_txo_sum", 0) + mempool.get("funded_txo_sum", 0)
-            spent = chain.get("spent_txo_sum", 0) + mempool.get("spent_txo_sum", 0)
-            return funded - spent
-    except Exception:
-        return -1
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"https://blockstream.info/api/address/{address}")
+            if r.status_code != 200: return -1
+            d = r.json()
+            return (d["chain_stats"]["funded_txo_sum"] + d["mempool_stats"]["funded_txo_sum"]) - (d["chain_stats"]["spent_txo_sum"] + d["mempool_stats"]["spent_txo_sum"])
+    except: return -1
 
-
-# ─── ГЛАВНОЕ МЕНЮ ──────────────────────────────────────────────────────────
-
-def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
-    keyboard = [
-        [InlineKeyboardButton("🛍 Каталог", callback_data="catalog"), InlineKeyboardButton("🛒 Корзина", callback_data="view_cart")],
-        [InlineKeyboardButton("📋 Мои заказы", callback_data="my_orders"), InlineKeyboardButton("🎁 Пробники", callback_data="samples")],
-        [InlineKeyboardButton("🆘 Поддержка", callback_data="support")],
+def main_menu_keyboard(uid):
+    k = [
+        [InlineKeyboardButton("Каталог", callback_data="catalog"), InlineKeyboardButton("Корзина", callback_data="view_cart")],
+        [InlineKeyboardButton("Мои заказы", callback_data="my_orders"), InlineKeyboardButton("Пробники", callback_data="samples")],
+        [InlineKeyboardButton("Отзывы", callback_data="show_reviews"), InlineKeyboardButton("Поддержка", callback_data="support")],
     ]
-    if is_admin(user_id):
-        keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
-    return InlineKeyboardMarkup(keyboard)
+    if is_admin(uid): k.append([InlineKeyboardButton("Админ-панель", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(k)
 
-
-HOME_BTN = InlineKeyboardButton("🏠  Главное меню", callback_data="back")
-
+HOME_BTN = InlineKeyboardButton("Главное меню", callback_data="back")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     await delete_extra_msgs(context, update.effective_chat.id)
-    msg = await update.message.reply_text("👋 Добро пожаловать в магазин!\n\nВыберите раздел:", reply_markup=main_menu_keyboard(user_id))
-    context.user_data["nav_msg"] = msg.message_id
-
+    await update.message.reply_text("Добро пожаловать в магазин!", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await delete_extra_msgs(context, query.message.chat_id)
-    await query.edit_message_text("👋 Добро пожаловать в магазин!\n\nВыберите раздел:", reply_markup=main_menu_keyboard(query.from_user.id))
-
-
-# ─── КАТАЛОГ ───────────────────────────────────────────────────────────────
+    q = update.callback_query; await q.answer()
+    await delete_extra_msgs(context, q.message.chat_id)
+    await q.edit_message_text("Добро пожаловать в магазин!", reply_markup=main_menu_keyboard(q.from_user.id))
 
 async def show_catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+    q = update.callback_query; await q.answer()
     if not PRODUCTS:
-        await query.edit_message_text("😔 Товаров пока нет.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
-        return
-    text = "🛍  *Наши товары:*\n"
-    keyboard = []
+        await q.edit_message_text("Товаров пока нет.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    text, kb = "Товары:\n", []
     for p in PRODUCTS:
-        count = len(p.get("items", []))
-        text += f"\n▫ *{p['name']}* — {p['price']} руб. (в наличии: {count})"
-        keyboard.append([InlineKeyboardButton(f"+ {p['name']} ({p['price']} ₽)", callback_data=f"add_{p['id']}")])
-    keyboard.append([HOME_BTN])
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
+        n = len(p.get("items", []))
+        text += f"\n{p['name']} — {p['price']} руб. (в наличии: {n})"
+        kb.append([InlineKeyboardButton(f"+ {p['name']} ({p['price']} руб.)", callback_data=f"add_{p['id']}")])
+    kb.append([HOME_BTN])
+    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 async def add_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    prod_id = query.data.split("_", 1)[1]
-    product = next((p for p in PRODUCTS if p["id"] == prod_id), None)
-    if not product:
-        await query.answer("Товар не найден!")
-        return
-    user_carts.setdefault(user_id, []).append(product)
-    await query.answer(f"✅ {product['name']} добавлен в корзину!")
-
-
-# ─── КОРЗИНА ───────────────────────────────────────────────────────────────
+    q = update.callback_query; p = next((p for p in PRODUCTS if p["id"] == q.data.split("_", 1)[1]), None)
+    if not p: await q.answer("Товар не найден!"); return
+    user_carts.setdefault(q.from_user.id, []).append(p)
+    await q.answer(f"Добавлен {p['name']}!")
 
 async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    cart = user_carts.get(user_id, [])
+    q = update.callback_query; await q.answer()
+    cart = user_carts.get(q.from_user.id, [])
     if not cart:
-        await query.edit_message_text("🛒 Корзина пуста.\n\nДобавьте товары из каталога.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍  Перейти в каталог", callback_data="catalog")], [HOME_BTN]]))
-        return
-    text = "🛒 *Ваша корзина:*\n"
-    total = 0
-    for p in cart:
-        text += f"\n▫ {p['name']} — {p['price']} руб."
-        total += p["price"]
-    text += f"\n\n💰 *Итого: {total} руб.*"
-    keyboard = [
-        [InlineKeyboardButton("🛍  Продолжить покупки", callback_data="catalog")],
-        [InlineKeyboardButton("₿  Оплатить Bitcoin", callback_data="order_btc")],
-        [InlineKeyboardButton("🗑  Очистить корзину", callback_data="clear_cart")],
-        [HOME_BTN],
-    ]
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-
+        await q.edit_message_text("Корзина пуста.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("В каталог", callback_data="catalog")], [HOME_BTN]])); return
+    total = sum(p["price"] for p in cart)
+    text = "Корзина:\n" + "\n".join(f"{p['name']} — {p['price']} руб." for p in cart) + f"\n\nИтого: {total} руб."
+    kb = [[InlineKeyboardButton("Продолжить покупки", callback_data="catalog")],
+          [InlineKeyboardButton("Оплатить Bitcoin", callback_data="order_btc")],
+          [InlineKeyboardButton("Очистить корзину", callback_data="clear_cart")], [HOME_BTN]]
+    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 async def clear_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer("Корзина очищена")
-    user_carts[query.from_user.id] = []
-    await query.edit_message_text("🛒 Корзина очищена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍  В каталог", callback_data="catalog")], [HOME_BTN]]))
+    q = update.callback_query; await q.answer("Очищено"); user_carts[q.from_user.id] = []
+    await q.edit_message_text("Корзина очищена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("В каталог", callback_data="catalog")], [HOME_BTN]]))
 
-
-# ─── BITCOIN ОПЛАТА ────────────────────────────────────────────────────────
+async def deliver(uid, product, context):
+    if product.get("items"):
+        item = product["items"].pop(0); text, photo = item.get("text") or f"Товар «{product['name']}»!", item.get("photo")
+        if not product["items"]: PRODUCTS.remove(product)
+        storage(PRODUCTS_FILE, PRODUCTS)
+    else: text, photo = f"Товар «{product['name']}»!", None
+    if photo: await context.bot.send_photo(chat_id=uid, photo=photo, caption=text)
+    else: await context.bot.send_message(chat_id=uid, text=text)
 
 async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    cart = user_carts.get(user_id, [])
-
-    if not cart:
-        await query.edit_message_text("🛒 Корзина пуста.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
-        return
-
-    if str(user_id) in pending_orders:
-        order = pending_orders[str(user_id)]
-        await query.edit_message_text(
-            f"⏳ *У вас уже есть активный заказ*\n\nСумма: `{order['amount_btc']:.8f}` BTC\n\nАдрес кошелька отправлен отдельным сообщением выше.\nОжидаю поступления средств...",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить заказ", callback_data="cancel_order")], [HOME_BTN]]),
-        )
-        return
-
-    total_rub = sum(p["price"] for p in cart)
-
-    # Бесплатный товар — выдаём сразу без курса и кошелька
-    if total_rub == 0:
-        user_carts[user_id] = []
-        await query.edit_message_text("🎁 Отправляю бесплатный товар...")
-        for product in cart:
-            if product.get("items") and len(product["items"]) > 0:
-                item = product["items"].pop(0)
-                text = item.get("text") or f"🎁 Бесплатный товар «{product['name']}»!"
-                photo = item.get("photo")
-                if len(product["items"]) == 0:
-                    PRODUCTS.remove(product)
-                save_json(PRODUCTS_FILE, PRODUCTS)
-            else:
-                text = f"🎁 Бесплатный товар «{product['name']}»!"
-                photo = None
-            if photo:
-                await context.bot.send_photo(chat_id=user_id, photo=photo, caption=text)
-            else:
-                await context.bot.send_message(chat_id=user_id, text=text)
-        await query.edit_message_text("🎁 Бесплатный товар отправлен!", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
-        return
-
-    await query.edit_message_text("⏳ Загружаю текущий курс Bitcoin...")
-
+    q = update.callback_query; await q.answer()
+    uid, cart = q.from_user.id, user_carts.get(q.from_user.id, [])
+    if not cart: await q.edit_message_text("Корзина пуста.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    if str(uid) in pending_orders:
+        o = pending_orders[str(uid)]
+        await q.edit_message_text(f"Уже есть заказ на {o['amount_btc']:.8f} BTC. Ожидайте.", parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Отменить", callback_data="cancel_order")], [HOME_BTN]])); return
+    total = sum(p["price"] for p in cart)
+    if total == 0:
+        user_carts[uid] = []
+        for p in cart: await deliver(uid, p, context)
+        await q.edit_message_text("Бесплатный товар отправлен!", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    await q.edit_message_text("Загружаю курс...")
     rate = await fetch_btc_rate()
-    if rate <= 0:
-        await query.edit_message_text("❌ Не удалось получить курс BTC. Попробуйте позже.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
-        return
-
-    btc_amount = rub_to_btc(total_rub, rate)
-    btc_amount = round(btc_amount, 5)
-    if btc_amount > 0 and btc_amount < 0.00001:
-        btc_amount = 0.00001
-    expected_satoshi = btc_to_satoshi(btc_amount)
-    baseline = await get_received_satoshi(BITCOIN_ADDRESS)
-
-    pending_orders[str(user_id)] = {
-        "amount_btc": btc_amount,
-        "amount_rub": total_rub,
-        "cart": list(cart),
-        "created_at": time.time(),
-        "expected_satoshi": expected_satoshi,
-        "baseline_satoshi": baseline if baseline >= 0 else 0,
-    }
-    save_json(PENDING_FILE, pending_orders)
-    user_carts[user_id] = []
-
-    await query.edit_message_text(
-        f"₿ *Оплата Bitcoin*\n\nСумма к оплате:\n`{btc_amount:.8f}` BTC\n\n💱 Курс: 1 BTC ≈ {rate:,.0f} ₽\n🛒 Итого: {total_rub} ₽\n\n👇 Адрес кошелька — в следующем сообщении\n\n⏳ Бот проверяет оплату каждые 30 секунд.\nТовар будет отправлен после подтверждения.\nВремя ожидания: до 60 минут.",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить заказ", callback_data="cancel_order")], [HOME_BTN]]),
-    )
-
-    addr_msg = await context.bot.send_message(chat_id=user_id, text=BITCOIN_ADDRESS)
-    context.user_data.setdefault("extra_msgs", []).append(addr_msg.message_id)
-
-    instr_msg = await context.bot.send_message(
-        chat_id=user_id,
-        text=(
-            f"ℹ️ *Инструкция по оплате:*\n\n"
-            f"1️⃣ Отправьте точно `{btc_amount:.8f}` BTC на адрес выше\n"
-            f"2️⃣ Комиссия сети Bitcoin — за ваш счёт\n"
-            f"3️⃣ Бот проверяет поступление каждые 30 секунд\n"
-            f"4️⃣ Товар будет отправлен *сразу после обнаружения транзакции*\n"
-            f"   (не нужно ждать подтверждений сети)\n\n"
-            f"⚡ *Скорость получения товара: до 1 минуты после отправки*"
-        ),
-        parse_mode="Markdown",
-    )
-    context.user_data.setdefault("extra_msgs", []).append(instr_msg.message_id)
-
-    asyncio.create_task(check_payment_loop(user_id, context.application))
-
+    if rate <= 0: await q.edit_message_text("Не удалось получить курс.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    btc = round(rub_to_btc(total, rate), 5)
+    if 0 < btc < 0.00001: btc = 0.00001
+    sat = btc_to_satoshi(btc); base = await get_received_satoshi(BITCOIN_ADDRESS)
+    pending_orders[str(uid)] = {"amount_btc": btc, "amount_rub": total, "cart": list(cart), "created_at": time.time(), "expected_satoshi": sat, "baseline_satoshi": base if base >= 0 else 0}
+    storage(PENDING_FILE, pending_orders); user_carts[uid] = []
+    await q.edit_message_text(f"Оплата Bitcoin\n\nСумма: {btc:.8f} BTC\nКурс: 1 BTC ≈ {rate:,.0f} руб.\nИтого: {total} руб.\n\nАдрес в следующем сообщении\n\nБот проверяет каждые 30 сек.\nТовар после подтверждения.\nДо 60 минут.",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Отменить", callback_data="cancel_order")], [HOME_BTN]]))
+    await context.bot.send_message(chat_id=uid, text=BITCOIN_ADDRESS)
+    await context.bot.send_message(chat_id=uid, text=f"Отправьте {btc:.8f} BTC на адрес выше.\nКомиссия сети — за ваш счёт.\nПроверка каждые 30 сек.\nТовар сразу после транзакции.")
+    asyncio.create_task(check_payment_loop(uid, context.application))
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = str(query.from_user.id)
-    pending_orders.pop(user_id, None)
-    save_json(PENDING_FILE, pending_orders)
-    await delete_extra_msgs(context, query.message.chat_id)
-    await query.edit_message_text("❌ Заказ отменён.\n\nВы можете начать заново.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍  Каталог", callback_data="catalog")], [HOME_BTN]]))
+    q = update.callback_query; await q.answer()
+    pending_orders.pop(str(q.from_user.id), None); storage(PENDING_FILE, pending_orders)
+    await delete_extra_msgs(context, q.message.chat_id)
+    await q.edit_message_text("Заказ отменён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Каталог", callback_data="catalog")], [HOME_BTN]]))
 
-
-async def check_payment_loop(user_id: int, application):
-    uid = str(user_id)
+async def check_payment_loop(uid, app):
     while True:
         await asyncio.sleep(30)
-        order = pending_orders.get(uid)
-        if not order:
+        o = pending_orders.get(str(uid))
+        if not o: break
+        if time.time() - o["created_at"] > ORDER_TIMEOUT:
+            pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
+            await app.bot.send_message(chat_id=uid, text="Время истекло. Заказ отменён."); break
+        r = await get_received_satoshi(BITCOIN_ADDRESS)
+        if r < 0: continue
+        if r - o.get("baseline_satoshi", 0) >= o["expected_satoshi"] - int(o["expected_satoshi"] * 0.05):
+            pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
+            await app.bot.send_message(chat_id=uid, text="Оплата получена! Отправляю...")
+            for p in o["cart"]: await deliver(uid, p, app)
+            cart_text = "\n".join(f"{p['name']} — {p['price']} руб." for p in o["cart"])
+            for aid in ADMIN_IDS:
+                try: await app.bot.send_message(chat_id=aid, text=f"Новая оплата!\nПокупатель: {uid}\n{cart_text}\nСумма: {o['amount_rub']} руб. / {o['amount_btc']:.8f} BTC")
+                except: pass
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("Оставить отзыв", callback_data="review_shop")]])
+            await app.bot.send_message(chat_id=uid, text="Понравился магазин? Оставьте отзыв!", reply_markup=kb)
             break
-        if time.time() - order["created_at"] > ORDER_TIMEOUT:
-            pending_orders.pop(uid, None)
-            save_json(PENDING_FILE, pending_orders)
-            await application.bot.send_message(chat_id=user_id, text="⌛ Время ожидания оплаты истекло (1 час).\nЗаказ отменён. Нажмите /start чтобы начать заново.")
-            break
-        received = await get_received_satoshi(BITCOIN_ADDRESS)
-        if received < 0:
-            continue
-        baseline = order.get("baseline_satoshi", 0)
-        tolerance = int(order["expected_satoshi"] * 0.05)
-        if received - baseline >= order["expected_satoshi"] - tolerance:
-            pending_orders.pop(uid, None)
-            save_json(PENDING_FILE, pending_orders)
-            await application.bot.send_message(chat_id=user_id, text="✅ *Оплата получена!* Отправляю ваши товары...", parse_mode="Markdown")
-            for product in order["cart"]:
-                if product.get("items") and len(product["items"]) > 0:
-                    item = product["items"].pop(0)
-                    text = item.get("text") or f"Спасибо за покупку товара «{product['name']}»!"
-                    photo = item.get("photo")
-                    if len(product["items"]) == 0:
-                        PRODUCTS.remove(product)
-                    save_json(PRODUCTS_FILE, PRODUCTS)
-                else:
-                    text = f"Спасибо за покупку товара «{product['name']}»!"
-                    photo = None
-
-                if photo:
-                    await application.bot.send_photo(chat_id=user_id, photo=photo, caption=text)
-                else:
-                    await application.bot.send_message(chat_id=user_id, text=text)
-            cart_text = "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in order["cart"])
-            for admin_id in ADMIN_IDS:
-                try:
-                    await application.bot.send_message(chat_id=admin_id, text=f"💰 *Новая оплата Bitcoin!*\n\n👤 Покупатель ID: `{user_id}`\n🛒 Товары:\n{cart_text}\n💵 Сумма: {order['amount_rub']} ₽ / `{order['amount_btc']:.8f}` BTC", parse_mode="Markdown")
-                except Exception:
-                    pass
-            break
-
-
-# ─── МОИ ЗАКАЗЫ ───────────────────────────────────────────────────────────
 
 async def show_my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    uid = str(query.from_user.id)
-    if uid not in pending_orders:
-        await query.edit_message_text("📋 У вас нет активных заказов.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
-        return
-    order = pending_orders[uid]
-    cart_items = "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in order["cart"])
-    remaining = max(0, ORDER_TIMEOUT - int(time.time() - order["created_at"]))
-    await query.edit_message_text(
-        f"📋 *Ваш активный заказ*\n\n🛒 Товары:\n{cart_items}\n\n💰 Сумма: {order['amount_rub']} руб.\n₿ К оплате: `{order['amount_btc']:.8f}` BTC\n\n👛 *Адрес:*\n`{BITCOIN_ADDRESS}`\n\n⏳ Осталось: {remaining // 60} мин.",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить заказ", callback_data="cancel_order")], [HOME_BTN]]),
-    )
+    q = update.callback_query; await q.answer()
+    o = pending_orders.get(str(q.from_user.id))
+    if not o: await q.edit_message_text("Нет активных заказов.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    items = "\n".join(f"{p['name']} — {p['price']} руб." for p in o["cart"])
+    await q.edit_message_text(f"Активный заказ\n\n{items}\n\nСумма: {o['amount_rub']} руб.\nК оплате: {o['amount_btc']:.8f} BTC\n\nАдрес: {BITCOIN_ADDRESS}\nОсталось: {max(0, ORDER_TIMEOUT - int(time.time() - o['created_at'])) // 60} мин.",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Отменить", callback_data="cancel_order")], [HOME_BTN]]))
 
+async def show_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    if not REVIEWS: await q.edit_message_text("Пока нет отзывов.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    text = "Отзывы:\n" + "\n".join(f"{'⭐'*r['stars']} {r['username']} ({r['date']})\n{r['text']}\n" for r in REVIEWS[-10:])
+    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
 
-# ─── ПОДДЕРЖКА ─────────────────────────────────────────────────────────────
+async def review_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    kb = [[InlineKeyboardButton(str(i), callback_data=f"rstars_{i}") for i in range(1, 4)],
+          [InlineKeyboardButton(str(i), callback_data=f"rstars_{i}") for i in range(4, 6)]]
+    await q.edit_message_text("Оцените магазин:", reply_markup=InlineKeyboardMarkup(kb))
+    return REVIEW_STAR
+
+async def review_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    context.user_data["stars"] = int(q.data.split("_")[1])
+    await q.edit_message_text("Напишите отзыв (или /skip):")
+    return REVIEW_TEXT
+
+async def review_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    REVIEWS.append({"user_id": update.effective_user.id, "username": update.effective_user.username or update.effective_user.full_name,
+                    "stars": context.user_data.get("stars", 5), "text": update.message.text, "date": time.strftime("%Y-%m-%d %H:%M")})
+    storage(REVIEWS_FILE, REVIEWS)
+    await update.message.reply_text("Спасибо за отзыв!")
+    return ConversationHandler.END
+
+async def review_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await review_text(update, context)
 
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "samples":
-        text = "🎁 *Пробники*\n\nЧтобы получить бесплатный пробник, напишите администратору.\nОн лично отправит вам подарок!"
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Написать админу", url=f"tg://user?id={os.getenv('ADMIN_CONTACT_ID')}")], [HOME_BTN]])
+    q = update.callback_query; await q.answer()
+    if q.data == "samples":
+        await q.edit_message_text("Пробники\n\nНапишите администратору.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Написать", url=f"tg://user?id={os.getenv('ADMIN_CONTACT_ID')}")], [HOME_BTN]]))
     else:
-        text = "🆘 *Техподдержка*\n\nЕсли у вас возникли вопросы или проблемы с заказом, пишите:\n@IchikavaAdmin"
-        keyboard = InlineKeyboardMarkup([[HOME_BTN]])
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
-
-
-# ─── АДМИН-ПАНЕЛЬ ──────────────────────────────────────────────────────────
+        await q.edit_message_text("Техподдержка\n\nПишите: @IchikavaAdmin", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
 
 def admin_main_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Добавить товар", callback_data="adm_add")],
-        [InlineKeyboardButton("✏️ Редактировать товар", callback_data="adm_edit")],
-        [InlineKeyboardButton("📋 Список товаров", callback_data="adm_list")],
-        [HOME_BTN],
-    ])
-
+    return InlineKeyboardMarkup([[InlineKeyboardButton("Добавить товар", callback_data="adm_add")],
+                                 [InlineKeyboardButton("Редактировать", callback_data="adm_edit")],
+                                 [InlineKeyboardButton("Список", callback_data="adm_list")], [HOME_BTN]])
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not is_admin(query.from_user.id):
-        await query.answer("Нет доступа!", show_alert=True)
-        return
-    await query.edit_message_text("⚙️ *Админ-панель*\n\nВыберите действие:", parse_mode="Markdown", reply_markup=admin_main_keyboard())
-
+    q = update.callback_query; await q.answer()
+    if not is_admin(q.from_user.id): await q.answer("Нет доступа!"); return
+    await q.edit_message_text("Админ-панель", reply_markup=admin_main_keyboard())
 
 async def admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not is_admin(query.from_user.id):
-        return
-    if not PRODUCTS:
-        text = "Товаров нет."
-    else:
-        text = "📋 *Товары:*\n"
-        for p in PRODUCTS:
-            count = len(p.get("items", []))
-            has_photo = "✅" if any(item.get("photo") for item in p.get("items", [])) else "❌"
-            text += f"\n*{p['name']}* — {p['price']} руб.\nВ наличии: {count} шт.\nФото: {has_photo}\n"
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]))
-
-
-# ─── ДОБАВЛЕНИЕ ТОВАРА ────────────────────────────────────────────────────
+    q = update.callback_query; await q.answer()
+    if not is_admin(q.from_user.id): return
+    if not PRODUCTS: await q.edit_message_text("Товаров нет.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="admin_panel")]])); return
+    text = "Товары:\n" + "\n".join(f"{p['name']} — {p['price']} руб. ({len(p.get('items',[]))} шт.)" for p in PRODUCTS)
+    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="admin_panel")]]))
 
 async def adm_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not is_admin(query.from_user.id):
-        return
-    context.user_data["new_product"] = {"items": []}
-    await query.edit_message_text("➕ *Добавление товара*\n\nШаг 1/3 — Введите название товара:", parse_mode="Markdown")
-    return ADD_NAME
+    q = update.callback_query; await q.answer()
+    if not is_admin(q.from_user.id): return
+    context.user_data["new"] = {"items": []}
+    await q.edit_message_text("Шаг 1/3 — Название:"); return ADD_NAME
 
 async def adm_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["new_product"]["name"] = update.message.text.strip()
-    await update.message.reply_text("Шаг 2/3 — Введите цену в рублях (только число):")
-    return ADD_PRICE
+    context.user_data["new"]["name"] = update.message.text.strip()
+    await update.message.reply_text("Шаг 2/3 — Цена:"); return ADD_PRICE
 
 async def adm_add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        price = int(update.message.text.strip())
-    except ValueError:
-        await update.message.reply_text("⚠️ Цена должна быть числом. Введите ещё раз:")
-        return ADD_PRICE
-    context.user_data["new_product"]["price"] = price
-    await update.message.reply_text("Шаг 3/3 — Введите текст, который получит покупатель (можно добавить несколько экземпляров позже):")
-    return ADD_DELIVERY_TEXT
+    try: context.user_data["new"]["price"] = int(update.message.text.strip())
+    except: await update.message.reply_text("Число!"); return ADD_PRICE
+    await update.message.reply_text("Шаг 3/3 — Текст:"); return ADD_DELIVERY_TEXT
 
 async def adm_add_delivery_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    context.user_data["new_product"]["items"].append({"text": text, "photo": None})
-    await update.message.reply_text(
-        "Отправьте фото для этого экземпляра или нажмите «Пропустить»:",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏭  Пропустить фото", callback_data="adm_skip_photo")],
-            [InlineKeyboardButton("✅ Завершить добавление", callback_data="adm_finish")],
-        ]),
-    )
+    context.user_data["new"]["items"].append({"text": update.message.text.strip(), "photo": None})
+    kb = [[InlineKeyboardButton("Пропустить фото", callback_data="adm_skip_photo")], [InlineKeyboardButton("Завершить", callback_data="adm_finish")]]
+    await update.message.reply_text("Фото или Пропустить:", reply_markup=InlineKeyboardMarkup(kb))
     return ADD_DELIVERY_PHOTO
 
 async def adm_add_delivery_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["new_product"]["items"][-1]["photo"] = update.message.photo[-1].file_id
-    await update.message.reply_text(
-        "✅ Фото добавлено! Добавить ещё экземпляр или завершить?",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ Добавить ещё экземпляр", callback_data="adm_add_more")],
-            [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")],
-        ]),
-    )
+    context.user_data["new"]["items"][-1]["photo"] = update.message.photo[-1].file_id
+    kb = [[InlineKeyboardButton("Ещё", callback_data="adm_add_more")], [InlineKeyboardButton("Завершить", callback_data="adm_finish")]]
+    await update.message.reply_text("Ещё или Завершить?", reply_markup=InlineKeyboardMarkup(kb))
     return ADD_DELIVERY_PHOTO
 
 async def adm_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text(
-        "Добавить ещё экземпляр или завершить?",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ Добавить ещё экземпляр", callback_data="adm_add_more")],
-            [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")],
-        ]),
-    )
+    q = update.callback_query; await q.answer()
+    kb = [[InlineKeyboardButton("Ещё", callback_data="adm_add_more")], [InlineKeyboardButton("Завершить", callback_data="adm_finish")]]
+    await q.edit_message_text("Ещё или Завершить?", reply_markup=InlineKeyboardMarkup(kb))
     return ADD_DELIVERY_PHOTO
 
 async def adm_add_more(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("Введите текст для следующего экземпляра:")
-    return ADD_DELIVERY_TEXT
+    q = update.callback_query; await q.answer()
+    await q.edit_message_text("Текст следующего:"); return ADD_DELIVERY_TEXT
 
 async def adm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    return await _save_new_product(update, context, query=query)
+    q = update.callback_query; await q.answer()
+    return await _save_new_product(update, context, query=q)
 
 async def _save_new_product(update, context, query=None):
     global PRODUCTS
-    np = context.user_data.pop("new_product")
-    np["id"] = get_next_id()
-    PRODUCTS.append(np)
-    save_json(PRODUCTS_FILE, PRODUCTS)
-    count = len(np.get("items", []))
-    text = f"✅ Товар *{np['name']}* успешно добавлен! (экземпляров: {count})"
-    if query:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
-    else:
-        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
+    np = context.user_data.pop("new"); np["id"] = get_next_id(); PRODUCTS.append(np)
+    storage(PRODUCTS_FILE, PRODUCTS)
+    text = f"Товар {np['name']} добавлен ({len(np.get('items',[]))} шт.)"
+    if query: await query.edit_message_text(text, reply_markup=admin_main_keyboard())
+    else: await update.message.reply_text(text, reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
 async def adm_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.pop("new_product", None)
-    context.user_data.pop("edit_product_id", None)
-    context.user_data.pop("edit_field", None)
+    for k in ("new", "edit_product_id", "edit_field"): context.user_data.pop(k, None)
     await update.message.reply_text("Отменено.", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
-
-# ─── РЕДАКТИРОВАНИЕ ТОВАРА ────────────────────────────────────────────────
-
 async def adm_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if not is_admin(query.from_user.id):
-        return
-    if not PRODUCTS:
-        await query.edit_message_text("Товаров нет.", reply_markup=admin_main_keyboard())
-        return ConversationHandler.END
-    keyboard = [[InlineKeyboardButton(f"{p['name']} ({len(p.get('items', []))} шт.)", callback_data=f"esel_{p['id']}")] for p in PRODUCTS]
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="adm_cancel_cb")])
-    await query.edit_message_text("✏️ Выберите товар:", reply_markup=InlineKeyboardMarkup(keyboard))
+    q = update.callback_query; await q.answer()
+    if not is_admin(q.from_user.id): return
+    if not PRODUCTS: await q.edit_message_text("Нет товаров.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
+    kb = [[InlineKeyboardButton(f"{p['name']} ({len(p.get('items',[]))} шт.)", callback_data=f"esel_{p['id']}")] for p in PRODUCTS]
+    kb.append([InlineKeyboardButton("Назад", callback_data="adm_cancel_cb")])
+    await q.edit_message_text("Выберите:", reply_markup=InlineKeyboardMarkup(kb))
     return EDIT_SELECT
 
 async def adm_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    prod_id = query.data.split("_", 1)[1]
-    product = next((p for p in PRODUCTS if p["id"] == prod_id), None)
-    if not product:
-        await query.answer("Товар не найден!")
-        return ConversationHandler.END
-    context.user_data["edit_product_id"] = prod_id
-    keyboard = [
-        [InlineKeyboardButton("📝 Название", callback_data="ef_name")],
-        [InlineKeyboardButton("💰 Цена", callback_data="ef_price")],
-        [InlineKeyboardButton("🗑 Удалить товар", callback_data="ef_delete")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="adm_cancel_cb")],
-    ]
-    await query.edit_message_text(f"✏️ *{product['name']}* — {product['price']} руб. ({len(product.get('items', []))} шт.)\n\nЧто изменить?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    q = update.callback_query; await q.answer()
+    p = next((p for p in PRODUCTS if p["id"] == q.data.split("_", 1)[1]), None)
+    if not p: await q.answer("Не найден!"); return ConversationHandler.END
+    context.user_data["edit_id"] = p["id"]
+    kb = [[InlineKeyboardButton("Название", callback_data="ef_name")], [InlineKeyboardButton("Цена", callback_data="ef_price")],
+          [InlineKeyboardButton("Удалить", callback_data="ef_delete")], [InlineKeyboardButton("Назад", callback_data="adm_cancel_cb")]]
+    await q.edit_message_text(f"{p['name']} — {p['price']} руб.\nЧто изменить?", reply_markup=InlineKeyboardMarkup(kb))
     return EDIT_FIELD
 
 async def adm_edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global PRODUCTS
-    query = update.callback_query
-    await query.answer()
-    field = query.data.split("_", 1)[1]
-    prod_id = context.user_data.get("edit_product_id")
-    if field == "delete":
-        PRODUCTS = [p for p in PRODUCTS if p["id"] != prod_id]
-        save_json(PRODUCTS_FILE, PRODUCTS)
-        await query.edit_message_text("🗑 Товар удалён.", reply_markup=admin_main_keyboard())
-        return ConversationHandler.END
-    context.user_data["edit_field"] = field
-    prompts = {"name": "Введите новое название:", "price": "Введите новую цену (число):"}
-    await query.edit_message_text(prompts.get(field, "Введите значение:"))
+    q = update.callback_query; await q.answer()
+    f, pid = q.data.split("_", 1)[1], context.user_data.get("edit_id")
+    if f == "delete":
+        PRODUCTS = [p for p in PRODUCTS if p["id"] != pid]; storage(PRODUCTS_FILE, PRODUCTS)
+        await q.edit_message_text("Удалён.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
+    context.user_data["edit_field"] = f
+    await q.edit_message_text("Введите новое значение:" if f != "price" else "Цена (число):")
     return EDIT_VALUE_TEXT
 
 async def adm_edit_value_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global PRODUCTS
-    field = context.user_data.get("edit_field")
-    prod_id = context.user_data.get("edit_product_id")
-    product = next((p for p in PRODUCTS if p["id"] == prod_id), None)
-    if not product:
-        await update.message.reply_text("Товар не найден.")
-        return ConversationHandler.END
-    value = update.message.text.strip()
-    if field == "price":
-        try:
-            value = int(value)
-        except ValueError:
-            await update.message.reply_text("⚠️ Цена должна быть числом. Введите ещё раз:")
-            return EDIT_VALUE_TEXT
-    product[field] = value
-    save_json(PRODUCTS_FILE, PRODUCTS)
-    await update.message.reply_text("✅ Сохранено!", reply_markup=admin_main_keyboard())
+    p = next((p for p in PRODUCTS if p["id"] == context.user_data.get("edit_id")), None)
+    if not p: await update.message.reply_text("Не найден."); return ConversationHandler.END
+    v = update.message.text.strip()
+    if context.user_data.get("edit_field") == "price":
+        try: v = int(v)
+        except: await update.message.reply_text("Число!"); return EDIT_VALUE_TEXT
+    p[context.user_data["edit_field"]] = v
+    storage(PRODUCTS_FILE, PRODUCTS)
+    await update.message.reply_text("Сохранено!", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
 async def adm_cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    context.user_data.pop("new_product", None)
-    context.user_data.pop("edit_product_id", None)
-    context.user_data.pop("edit_field", None)
-    await query.edit_message_text("⚙️ *Админ-панель*\n\nВыберите действие:", parse_mode="Markdown", reply_markup=admin_main_keyboard())
+    q = update.callback_query; await q.answer()
+    for k in ("new", "edit_id", "edit_field"): context.user_data.pop(k, None)
+    await q.edit_message_text("Админ-панель", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
-
-
-# ─── ЗАПУСК ────────────────────────────────────────────────────────────────
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     add_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(adm_add_start, pattern="^adm_add$")],
-        states={
-            ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_name)],
-            ADD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_price)],
-            ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)],
-            ADD_DELIVERY_PHOTO: [
-                MessageHandler(filters.PHOTO, adm_add_delivery_photo),
-                CallbackQueryHandler(adm_skip_photo, pattern="^adm_skip_photo$"),
-                CallbackQueryHandler(adm_add_more, pattern="^adm_add_more$"),
-                CallbackQueryHandler(adm_finish, pattern="^adm_finish$"),
-            ],
-        },
-        fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")],
-        per_message=False,
-    )
+        states={ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_name)],
+                ADD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_price)],
+                ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)],
+                ADD_DELIVERY_PHOTO: [MessageHandler(filters.PHOTO, adm_add_delivery_photo),
+                                     CallbackQueryHandler(adm_skip_photo, pattern="^adm_skip_photo$"),
+                                     CallbackQueryHandler(adm_add_more, pattern="^adm_add_more$"),
+                                     CallbackQueryHandler(adm_finish, pattern="^adm_finish$")]},
+        fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")], per_message=False)
 
     edit_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(adm_edit_start, pattern="^adm_edit$")],
-        states={
-            EDIT_SELECT: [CallbackQueryHandler(adm_edit_select, pattern="^esel_")],
-            EDIT_FIELD: [CallbackQueryHandler(adm_edit_field, pattern="^ef_"), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")],
-            EDIT_VALUE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_edit_value_text)],
-        },
-        fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")],
-        per_message=False,
-    )
+        states={EDIT_SELECT: [CallbackQueryHandler(adm_edit_select, pattern="^esel_")],
+                EDIT_FIELD: [CallbackQueryHandler(adm_edit_field, pattern="^ef_"), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")],
+                EDIT_VALUE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_edit_value_text)]},
+        fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")], per_message=False)
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(add_conv)
-    app.add_handler(edit_conv)
-    app.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin_panel$"))
-    app.add_handler(CallbackQueryHandler(admin_list, pattern="^adm_list$"))
-    app.add_handler(CallbackQueryHandler(show_catalog, pattern="^catalog$"))
-    app.add_handler(CallbackQueryHandler(add_to_cart, pattern="^add_"))
-    app.add_handler(CallbackQueryHandler(view_cart, pattern="^view_cart$"))
-    app.add_handler(CallbackQueryHandler(clear_cart, pattern="^clear_cart$"))
-    app.add_handler(CallbackQueryHandler(make_order_btc, pattern="^order_btc$"))
-    app.add_handler(CallbackQueryHandler(cancel_order, pattern="^cancel_order$"))
-    app.add_handler(CallbackQueryHandler(show_support, pattern="^support$"))
-    app.add_handler(CallbackQueryHandler(show_support, pattern="^samples$"))
-    app.add_handler(CallbackQueryHandler(show_my_orders, pattern="^my_orders$"))
-    app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back$"))
+    review_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(review_start, pattern="^review_shop$")],
+        states={REVIEW_STAR: [CallbackQueryHandler(review_star, pattern="^rstars_")],
+                REVIEW_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_text), CommandHandler("skip", review_skip)]},
+        fallbacks=[], per_message=True)
+
+    handlers = [
+        CommandHandler("start", start), add_conv, edit_conv, review_conv,
+        CallbackQueryHandler(admin_panel, pattern="^admin_panel$"), CallbackQueryHandler(admin_list, pattern="^adm_list$"),
+        CallbackQueryHandler(show_catalog, pattern="^catalog$"), CallbackQueryHandler(add_to_cart, pattern="^add_"),
+        CallbackQueryHandler(view_cart, pattern="^view_cart$"), CallbackQueryHandler(clear_cart, pattern="^clear_cart$"),
+        CallbackQueryHandler(make_order_btc, pattern="^order_btc$"), CallbackQueryHandler(cancel_order, pattern="^cancel_order$"),
+        CallbackQueryHandler(show_reviews, pattern="^show_reviews$"), CallbackQueryHandler(show_support, pattern="^support$"),
+        CallbackQueryHandler(show_support, pattern="^samples$"), CallbackQueryHandler(show_my_orders, pattern="^my_orders$"),
+        CallbackQueryHandler(back_to_start, pattern="^back$")
+    ]
+    for h in handlers: app.add_handler(h)
 
     for uid in list(pending_orders.keys()):
         asyncio.create_task(check_payment_loop(int(uid), app))
 
     async def error_handler(update, context):
         try:
-            if update and update.callback_query:
-                await update.callback_query.answer()
-        except:
-            pass
+            if update and update.callback_query: await update.callback_query.answer()
+        except: pass
 
     app.add_error_handler(error_handler)
     keep_alive()
     print("Бот запущен!")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
