@@ -34,6 +34,7 @@ def keep_alive():
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
+CHANNEL_ID = os.getenv("CHANNEL_ID", "")
 
 PRODUCTS_FILE = "products.json"
 PENDING_FILE = "pending_orders.json"
@@ -237,11 +238,20 @@ async def show_my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]]))
 
+# ─── Кнопка Отзывы ведёт в канал ──────────────────────────────────────────
 async def show_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    if not REVIEWS: await q.edit_message_text("💬 Пока нет отзывов.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
-    text = "💬 *Отзывы о магазине:*\n" + "\n".join(f"{'⭐'*r['stars']} *{r['username']}* ({r['date']})\n{r['text']}\n" for r in REVIEWS[-10:])
-    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
+    await q.edit_message_text(
+        "💬 *Отзывы о магазине*\n\n"
+        "Читайте отзывы и общайтесь в нашем канале!",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("💬 Перейти в канал", url="https://t.me/BokuYaba_Reviews")],
+            [HOME_BTN],
+        ]),
+    )
+
+# ─── Оставление отзыва с отправкой в канал ────────────────────────────────
 
 async def review_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
@@ -263,7 +273,11 @@ async def review_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "/skip":
         return await review_skip(update, context)
     
-    # Удаляем сообщения
+    stars = context.user_data.get("stars", 5)
+    user = update.effective_user
+    username = user.username or user.full_name
+    
+    # Удаляем лишние сообщения
     for msg_id in (context.user_data.pop("star_msg_id", None), context.user_data.pop("text_prompt_msg_id", None)):
         if msg_id:
             try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_id)
@@ -271,23 +285,40 @@ async def review_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await update.message.delete()
     except: pass
     
-    REVIEWS.append({"user_id": update.effective_user.id, "username": update.effective_user.username or update.effective_user.full_name,
-                    "stars": context.user_data.get("stars", 5), "text": text, "date": time.strftime("%Y-%m-%d %H:%M")})
+    # Сохраняем отзыв
+    REVIEWS.append({"user_id": user.id, "username": username, "stars": stars, "text": text, "date": time.strftime("%Y-%m-%d %H:%M")})
     storage(REVIEWS_FILE, REVIEWS)
-    await update.message.reply_text("✅ Спасибо за отзыв! Он появится в разделе «Отзывы».")
+    
+    # Отправляем в канал
+    if CHANNEL_ID:
+        try: await context.bot.send_message(chat_id=CHANNEL_ID, text=f"{'⭐'*stars} Отзыв от @{username}:\n\n{text}")
+        except: pass
+    
+    await update.message.reply_text("✅ Спасибо за отзыв! Он появится в нашем канале.")
     return ConversationHandler.END
 
 async def review_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Удаляем сообщения
+    stars = context.user_data.get("stars", 5)
+    user = update.effective_user
+    username = user.username or user.full_name
+    chat_id = update.effective_chat.id
+    
+    # Удаляем лишние сообщения
     for msg_id in (context.user_data.pop("star_msg_id", None), context.user_data.pop("text_prompt_msg_id", None)):
         if msg_id:
-            try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_id)
+            try: await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
             except: pass
     
-    REVIEWS.append({"user_id": update.effective_user.id, "username": update.effective_user.username or update.effective_user.full_name,
-                    "stars": context.user_data.get("stars", 5), "text": "Без текста", "date": time.strftime("%Y-%m-%d %H:%M")})
+    # Сохраняем отзыв
+    REVIEWS.append({"user_id": user.id, "username": username, "stars": stars, "text": "Без текста", "date": time.strftime("%Y-%m-%d %H:%M")})
     storage(REVIEWS_FILE, REVIEWS)
-    await update.message.reply_text("✅ Спасибо за отзыв! Он появится в разделе «Отзывы».")
+    
+    # Отправляем в канал
+    if CHANNEL_ID:
+        try: await context.bot.send_message(chat_id=CHANNEL_ID, text=f"{'⭐'*stars} Отзыв от @{username}:\n\nБез текста")
+        except: pass
+    
+    await context.bot.send_message(chat_id=chat_id, text="✅ Спасибо за отзыв! Он появится в нашем канале.")
     return ConversationHandler.END
 
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
