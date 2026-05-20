@@ -34,7 +34,7 @@ def keep_alive():
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
-REVIEWS_LINK = "https://t.me/yamadarew"
+REVIEWS_LINK = "https://t.me/+2_l8yp70MUQ3OWJh"
 
 PRODUCTS_FILE = "products.json"
 PENDING_FILE = "pending_orders.json"
