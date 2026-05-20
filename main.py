@@ -253,18 +253,42 @@ async def review_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def review_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     context.user_data["stars"] = int(q.data.split("_")[1])
-    await q.edit_message_text("📝 Напишите текст отзыва (или /skip):")
+    context.user_data["star_msg_id"] = q.message.message_id
+    msg = await q.edit_message_text("📝 Напишите текст отзыва (или /skip):")
+    context.user_data["text_prompt_msg_id"] = msg.message_id
     return REVIEW_TEXT
 
 async def review_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text if update.message else "/skip"
+    if text == "/skip":
+        return await review_skip(update, context)
+    
+    # Удаляем сообщения
+    for msg_id in (context.user_data.pop("star_msg_id", None), context.user_data.pop("text_prompt_msg_id", None)):
+        if msg_id:
+            try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_id)
+            except: pass
+    try: await update.message.delete()
+    except: pass
+    
     REVIEWS.append({"user_id": update.effective_user.id, "username": update.effective_user.username or update.effective_user.full_name,
-                    "stars": context.user_data.get("stars", 5), "text": update.message.text, "date": time.strftime("%Y-%m-%d %H:%M")})
+                    "stars": context.user_data.get("stars", 5), "text": text, "date": time.strftime("%Y-%m-%d %H:%M")})
     storage(REVIEWS_FILE, REVIEWS)
     await update.message.reply_text("✅ Спасибо за отзыв! Он появится в разделе «Отзывы».")
     return ConversationHandler.END
 
 async def review_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await review_text(update, context)
+    # Удаляем сообщения
+    for msg_id in (context.user_data.pop("star_msg_id", None), context.user_data.pop("text_prompt_msg_id", None)):
+        if msg_id:
+            try: await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=msg_id)
+            except: pass
+    
+    REVIEWS.append({"user_id": update.effective_user.id, "username": update.effective_user.username or update.effective_user.full_name,
+                    "stars": context.user_data.get("stars", 5), "text": "Без текста", "date": time.strftime("%Y-%m-%d %H:%M")})
+    storage(REVIEWS_FILE, REVIEWS)
+    await update.message.reply_text("✅ Спасибо за отзыв! Он появится в разделе «Отзывы».")
+    return ConversationHandler.END
 
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
