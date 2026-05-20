@@ -245,9 +245,13 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
 
 def admin_main_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("➕ Добавить товар", callback_data="adm_add")],
-                                 [InlineKeyboardButton("✏️ Редактировать", callback_data="adm_edit")],
-                                 [InlineKeyboardButton("📋 Список", callback_data="adm_list")], [HOME_BTN]])
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Добавить товар", callback_data="adm_add")],
+        [InlineKeyboardButton("✏️ Редактировать", callback_data="adm_edit")],
+        [InlineKeyboardButton("📋 Список", callback_data="adm_list")],
+        [InlineKeyboardButton("📊 Статистика", callback_data="adm_stats")],
+        [HOME_BTN],
+    ])
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
@@ -259,6 +263,18 @@ async def admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(q.from_user.id): return
     if not PRODUCTS: await q.edit_message_text("📋 Товаров нет.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])); return
     text = "📋 *Товары:*\n" + "\n".join(f"▫ *{p['name']}* — {p['price']} руб. ({len(p.get('items',[]))} шт.)" for p in PRODUCTS)
+    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]))
+
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    if not is_admin(q.from_user.id): return
+    
+    active = len(pending_orders)
+    
+    text = f"📊 *Статистика магазина*\n\n"
+    text += f"🛒 Активных заказов: {active}\n"
+    text += f"📦 Товаров в каталоге: {len(PRODUCTS)}\n"
+    
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]))
 
 async def adm_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -389,6 +405,7 @@ def main():
     handlers = [
         CommandHandler("start", start), add_conv, edit_conv,
         CallbackQueryHandler(admin_panel, pattern="^admin_panel$"), CallbackQueryHandler(admin_list, pattern="^adm_list$"),
+        CallbackQueryHandler(admin_stats, pattern="^adm_stats$"),
         CallbackQueryHandler(show_catalog, pattern="^catalog$"), CallbackQueryHandler(add_to_cart, pattern="^add_"),
         CallbackQueryHandler(view_cart, pattern="^view_cart$"), CallbackQueryHandler(clear_cart, pattern="^clear_cart$"),
         CallbackQueryHandler(make_order_btc, pattern="^order_btc$"), CallbackQueryHandler(cancel_order, pattern="^cancel_order$"),
