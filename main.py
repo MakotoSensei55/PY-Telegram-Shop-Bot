@@ -168,7 +168,10 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if total == 0:
         user_carts[uid] = []
         for p in cart: await deliver(uid, p, context)
-        await q.edit_message_text("Бесплатный товар отправлен!", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+await q.edit_message_text("Бесплатный товар отправлен!", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Оставить отзыв", callback_data="review_shop")]])
+        await context.bot.send_message(chat_id=uid, text="Понравился магазин? Оставьте отзыв!", reply_markup=kb)
+        return
     await q.edit_message_text("Загружаю курс...")
     rate = await fetch_btc_rate()
     if rate <= 0: await q.edit_message_text("Не удалось получить курс.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
