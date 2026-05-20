@@ -21,7 +21,7 @@ app_web = Flask(__name__)
 
 @app_web.route('/')
 def home():
-    return "Bot is running!"
+    return "🟢 Бот работает!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
@@ -49,10 +49,10 @@ def storage(filename, data=None):
     return None
 
 PRODUCTS = storage(PRODUCTS_FILE) or [
-    {"id": "1", "name": "Стикерпак", "price": 300, "items": [{"text": "Стикерпак №1", "photo": None}, {"text": "Стикерпак №2", "photo": None}]},
-    {"id": "2", "name": "Гайд по Python", "price": 500, "items": [{"text": "Гайд по Python (полный)", "photo": None}]},
-    {"id": "3", "name": "Премиум доступ", "price": 1000, "items": [{"text": "Доступ на месяц", "photo": None}, {"text": "Доступ на год", "photo": None}]},
-    {"id": "test", "name": "Тестовый товар", "price": 0, "items": [{"text": "Тестовый экземпляр 1", "photo": None}, {"text": "Тестовый экземпляр 2", "photo": None}]},
+    {"id": "1", "name": "🎨 Стикерпак", "price": 300, "items": [{"text": "Стикерпак №1", "photo": None}, {"text": "Стикерпак №2", "photo": None}]},
+    {"id": "2", "name": "📘 Гайд по Python", "price": 500, "items": [{"text": "Гайд по Python (полный)", "photo": None}]},
+    {"id": "3", "name": "👑 Премиум доступ", "price": 1000, "items": [{"text": "Доступ на месяц", "photo": None}, {"text": "Доступ на год", "photo": None}]},
+    {"id": "test", "name": "🧪 Тестовый товар", "price": 0, "items": [{"text": "Тестовый экземпляр 1", "photo": None}, {"text": "Тестовый экземпляр 2", "photo": None}]},
 ]
 
 pending_orders = storage(PENDING_FILE) or {}
@@ -95,102 +95,111 @@ async def get_received_satoshi(address):
 
 def main_menu_keyboard(uid):
     k = [
-        [InlineKeyboardButton("Каталог", callback_data="catalog"), InlineKeyboardButton("Корзина", callback_data="view_cart")],
-        [InlineKeyboardButton("Мои заказы", callback_data="my_orders"), InlineKeyboardButton("Пробники", callback_data="samples")],
-        [InlineKeyboardButton("Отзывы", callback_data="show_reviews"), InlineKeyboardButton("Поддержка", callback_data="support")],
+        [InlineKeyboardButton("🛍 Каталог", callback_data="catalog"), InlineKeyboardButton("🛒 Корзина", callback_data="view_cart")],
+        [InlineKeyboardButton("📋 Мои заказы", callback_data="my_orders"), InlineKeyboardButton("🎁 Пробники", callback_data="samples")],
+        [InlineKeyboardButton("💬 Отзывы", callback_data="show_reviews"), InlineKeyboardButton("🆘 Поддержка", callback_data="support")],
     ]
-    if is_admin(uid): k.append([InlineKeyboardButton("Админ-панель", callback_data="admin_panel")])
+    if is_admin(uid): k.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(k)
 
-HOME_BTN = InlineKeyboardButton("Главное меню", callback_data="back")
+HOME_BTN = InlineKeyboardButton("🏠 Главное меню", callback_data="back")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_extra_msgs(context, update.effective_chat.id)
-    await update.message.reply_text("Добро пожаловать в магазин!", reply_markup=main_menu_keyboard(update.effective_user.id))
+    await update.message.reply_text("👋 Добро пожаловать в магазин!\n\nВыберите раздел:", reply_markup=main_menu_keyboard(update.effective_user.id))
 
 async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     await delete_extra_msgs(context, q.message.chat_id)
-    await q.edit_message_text("Добро пожаловать в магазин!", reply_markup=main_menu_keyboard(q.from_user.id))
+    await q.edit_message_text("👋 Добро пожаловать в магазин!\n\nВыберите раздел:", reply_markup=main_menu_keyboard(q.from_user.id))
 
 async def show_catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not PRODUCTS:
-        await q.edit_message_text("Товаров пока нет.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
-    text, kb = "Товары:\n", []
+        await q.edit_message_text("😔 Товаров пока нет.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    text, kb = "🛍 *Наши товары:*\n", []
     for p in PRODUCTS:
         n = len(p.get("items", []))
-        text += f"\n{p['name']} — {p['price']} руб. (в наличии: {n})"
-        kb.append([InlineKeyboardButton(f"+ {p['name']} ({p['price']} руб.)", callback_data=f"add_{p['id']}")])
+        text += f"\n▫ *{p['name']}* — {p['price']} руб. (в наличии: {n})"
+        kb.append([InlineKeyboardButton(f"➕ {p['name']} ({p['price']} ₽)", callback_data=f"add_{p['id']}")])
     kb.append([HOME_BTN])
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 async def add_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; p = next((p for p in PRODUCTS if p["id"] == q.data.split("_", 1)[1]), None)
-    if not p: await q.answer("Товар не найден!"); return
+    if not p: await q.answer("❌ Товар не найден!"); return
     user_carts.setdefault(q.from_user.id, []).append(p)
-    await q.answer(f"Добавлен {p['name']}!")
+    await q.answer(f"✅ {p['name']} добавлен в корзину!")
 
 async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     cart = user_carts.get(q.from_user.id, [])
     if not cart:
-        await q.edit_message_text("Корзина пуста.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("В каталог", callback_data="catalog")], [HOME_BTN]])); return
+        await q.edit_message_text("🛒 Корзина пуста.\n\nДобавьте товары из каталога.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 В каталог", callback_data="catalog")], [HOME_BTN]])); return
     total = sum(p["price"] for p in cart)
-    text = "Корзина:\n" + "\n".join(f"{p['name']} — {p['price']} руб." for p in cart) + f"\n\nИтого: {total} руб."
-    kb = [[InlineKeyboardButton("Продолжить покупки", callback_data="catalog")],
-          [InlineKeyboardButton("Оплатить Bitcoin", callback_data="order_btc")],
-          [InlineKeyboardButton("Очистить корзину", callback_data="clear_cart")], [HOME_BTN]]
+    text = "🛒 *Ваша корзина:*\n" + "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in cart) + f"\n\n💰 *Итого: {total} руб.*"
+    kb = [[InlineKeyboardButton("🛍 Продолжить покупки", callback_data="catalog")],
+          [InlineKeyboardButton("₿ Оплатить Bitcoin", callback_data="order_btc")],
+          [InlineKeyboardButton("🗑 Очистить корзину", callback_data="clear_cart")], [HOME_BTN]]
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 async def clear_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer("Очищено"); user_carts[q.from_user.id] = []
-    await q.edit_message_text("Корзина очищена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("В каталог", callback_data="catalog")], [HOME_BTN]]))
+    q = update.callback_query; await q.answer("🗑 Корзина очищена"); user_carts[q.from_user.id] = []
+    await q.edit_message_text("🛒 Корзина очищена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 В каталог", callback_data="catalog")], [HOME_BTN]]))
 
 async def deliver(uid, product, context):
     if product.get("items"):
-        item = product["items"].pop(0); text, photo = item.get("text") or f"Товар «{product['name']}»!", item.get("photo")
+        item = product["items"].pop(0); text, photo = item.get("text") or f"🎁 Товар «{product['name']}»!", item.get("photo")
         if not product["items"]: PRODUCTS.remove(product)
         storage(PRODUCTS_FILE, PRODUCTS)
-    else: text, photo = f"Товар «{product['name']}»!", None
+    else: text, photo = f"🎁 Товар «{product['name']}»!", None
     if photo: await context.bot.send_photo(chat_id=uid, photo=photo, caption=text)
     else: await context.bot.send_message(chat_id=uid, text=text)
 
 async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     uid, cart = q.from_user.id, user_carts.get(q.from_user.id, [])
-    if not cart: await q.edit_message_text("Корзина пуста.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    if not cart: await q.edit_message_text("🛒 Корзина пуста.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
     if str(uid) in pending_orders:
         o = pending_orders[str(uid)]
-        await q.edit_message_text(f"Уже есть заказ на {o['amount_btc']:.8f} BTC. Ожидайте.", parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Отменить", callback_data="cancel_order")], [HOME_BTN]])); return
+        await q.edit_message_text(f"⏳ *У вас уже есть активный заказ*\n\nСумма: `{o['amount_btc']:.8f}` BTC\n\nОжидаю поступления средств...", parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]])); return
     total = sum(p["price"] for p in cart)
     if total == 0:
         user_carts[uid] = []
         for p in cart: await deliver(uid, p, context)
-await q.edit_message_text("Бесплатный товар отправлен!", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Оставить отзыв", callback_data="review_shop")]])
-        await context.bot.send_message(chat_id=uid, text="Понравился магазин? Оставьте отзыв!", reply_markup=kb)
+        await q.edit_message_text("🎁 Бесплатный товар отправлен!", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ Оставить отзыв", callback_data="review_shop")]])
+        await context.bot.send_message(chat_id=uid, text="💬 Понравился магазин? Оставьте отзыв!", reply_markup=kb)
         return
-    await q.edit_message_text("Загружаю курс...")
+    await q.edit_message_text("⏳ Загружаю курс Bitcoin...")
     rate = await fetch_btc_rate()
-    if rate <= 0: await q.edit_message_text("Не удалось получить курс.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    if rate <= 0: await q.edit_message_text("❌ Не удалось получить курс.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
     btc = round(rub_to_btc(total, rate), 5)
     if 0 < btc < 0.00001: btc = 0.00001
     sat = btc_to_satoshi(btc); base = await get_received_satoshi(BITCOIN_ADDRESS)
     pending_orders[str(uid)] = {"amount_btc": btc, "amount_rub": total, "cart": list(cart), "created_at": time.time(), "expected_satoshi": sat, "baseline_satoshi": base if base >= 0 else 0}
     storage(PENDING_FILE, pending_orders); user_carts[uid] = []
-    await q.edit_message_text(f"Оплата Bitcoin\n\nСумма: {btc:.8f} BTC\nКурс: 1 BTC ≈ {rate:,.0f} руб.\nИтого: {total} руб.\n\nАдрес в следующем сообщении\n\nБот проверяет каждые 30 сек.\nТовар после подтверждения.\nДо 60 минут.",
-        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Отменить", callback_data="cancel_order")], [HOME_BTN]]))
+    await q.edit_message_text(
+        f"₿ *Оплата Bitcoin*\n\n"
+        f"Сумма к оплате:\n`{btc:.8f}` BTC\n\n"
+        f"💱 Курс: 1 BTC ≈ {rate:,.0f} ₽\n"
+        f"🛒 Итого: {total} ₽\n\n"
+        f"👇 Адрес кошелька — в следующем сообщении\n\n"
+        f"⏳ Бот проверяет оплату каждые 30 сек.\n"
+        f"Товар будет отправлен после подтверждения.\n"
+        f"Время ожидания: до 60 минут.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]]))
     await context.bot.send_message(chat_id=uid, text=BITCOIN_ADDRESS)
-    await context.bot.send_message(chat_id=uid, text=f"Отправьте {btc:.8f} BTC на адрес выше.\nКомиссия сети — за ваш счёт.\nПроверка каждые 30 сек.\nТовар сразу после транзакции.")
+    await context.bot.send_message(chat_id=uid, text=f"ℹ️ *Инструкция по оплате:*\n\n1️⃣ Отправьте точно `{btc:.8f}` BTC на адрес выше\n2️⃣ Комиссия сети — за ваш счёт\n3️⃣ Бот проверяет каждые 30 сек.\n4️⃣ Товар будет отправлен *сразу после обнаружения транзакции*\n\n⚡ *Скорость: до 1 минуты*", parse_mode="Markdown")
     asyncio.create_task(check_payment_loop(uid, context.application))
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     pending_orders.pop(str(q.from_user.id), None); storage(PENDING_FILE, pending_orders)
     await delete_extra_msgs(context, q.message.chat_id)
-    await q.edit_message_text("Заказ отменён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Каталог", callback_data="catalog")], [HOME_BTN]]))
+    await q.edit_message_text("❌ Заказ отменён.\n\nВы можете начать заново.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 Каталог", callback_data="catalog")], [HOME_BTN]]))
 
 async def check_payment_loop(uid, app):
     while True:
@@ -199,53 +208,59 @@ async def check_payment_loop(uid, app):
         if not o: break
         if time.time() - o["created_at"] > ORDER_TIMEOUT:
             pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
-            await app.bot.send_message(chat_id=uid, text="Время истекло. Заказ отменён."); break
+            await app.bot.send_message(chat_id=uid, text="⌛ Время ожидания истекло (1 час).\nЗаказ отменён."); break
         r = await get_received_satoshi(BITCOIN_ADDRESS)
         if r < 0: continue
         if r - o.get("baseline_satoshi", 0) >= o["expected_satoshi"] - int(o["expected_satoshi"] * 0.05):
             pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
-            await app.bot.send_message(chat_id=uid, text="Оплата получена! Отправляю...")
+            await app.bot.send_message(chat_id=uid, text="✅ *Оплата получена!* Отправляю ваши товары...", parse_mode="Markdown")
             for p in o["cart"]: await deliver(uid, p, app)
-            cart_text = "\n".join(f"{p['name']} — {p['price']} руб." for p in o["cart"])
+            cart_text = "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in o["cart"])
             for aid in ADMIN_IDS:
-                try: await app.bot.send_message(chat_id=aid, text=f"Новая оплата!\nПокупатель: {uid}\n{cart_text}\nСумма: {o['amount_rub']} руб. / {o['amount_btc']:.8f} BTC")
+                try: await app.bot.send_message(chat_id=aid, text=f"💰 *Новая оплата!*\n\n👤 Покупатель: `{uid}`\n🛒 Товары:\n{cart_text}\n💵 Сумма: {o['amount_rub']} ₽ / `{o['amount_btc']:.8f}` BTC", parse_mode="Markdown")
                 except: pass
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("Оставить отзыв", callback_data="review_shop")]])
-            await app.bot.send_message(chat_id=uid, text="Понравился магазин? Оставьте отзыв!", reply_markup=kb)
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("⭐ Оставить отзыв", callback_data="review_shop")]])
+            await app.bot.send_message(chat_id=uid, text="💬 Понравился магазин? Оставьте отзыв!", reply_markup=kb)
             break
 
 async def show_my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     o = pending_orders.get(str(q.from_user.id))
-    if not o: await q.edit_message_text("Нет активных заказов.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
-    items = "\n".join(f"{p['name']} — {p['price']} руб." for p in o["cart"])
-    await q.edit_message_text(f"Активный заказ\n\n{items}\n\nСумма: {o['amount_rub']} руб.\nК оплате: {o['amount_btc']:.8f} BTC\n\nАдрес: {BITCOIN_ADDRESS}\nОсталось: {max(0, ORDER_TIMEOUT - int(time.time() - o['created_at'])) // 60} мин.",
-        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Отменить", callback_data="cancel_order")], [HOME_BTN]]))
+    if not o: await q.edit_message_text("📋 У вас нет активных заказов.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    items = "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in o["cart"])
+    await q.edit_message_text(
+        f"📋 *Ваш активный заказ*\n\n🛒 Товары:\n{items}\n\n"
+        f"💰 Сумма: {o['amount_rub']} руб.\n"
+        f"₿ К оплате: `{o['amount_btc']:.8f}` BTC\n\n"
+        f"👛 *Адрес:*\n`{BITCOIN_ADDRESS}`\n\n"
+        f"⏳ Осталось: {max(0, ORDER_TIMEOUT - int(time.time() - o['created_at'])) // 60} мин.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]]))
 
 async def show_reviews(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    if not REVIEWS: await q.edit_message_text("Пока нет отзывов.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
-    text = "Отзывы:\n" + "\n".join(f"{'⭐'*r['stars']} {r['username']} ({r['date']})\n{r['text']}\n" for r in REVIEWS[-10:])
+    if not REVIEWS: await q.edit_message_text("💬 Пока нет отзывов.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
+    text = "💬 *Отзывы о магазине:*\n" + "\n".join(f"{'⭐'*r['stars']} *{r['username']}* ({r['date']})\n{r['text']}\n" for r in REVIEWS[-10:])
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
 
 async def review_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     kb = [[InlineKeyboardButton(str(i), callback_data=f"rstars_{i}") for i in range(1, 4)],
           [InlineKeyboardButton(str(i), callback_data=f"rstars_{i}") for i in range(4, 6)]]
-    await q.edit_message_text("Оцените магазин:", reply_markup=InlineKeyboardMarkup(kb))
+    await q.edit_message_text("⭐ Поставьте оценку магазину:", reply_markup=InlineKeyboardMarkup(kb))
     return REVIEW_STAR
 
 async def review_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     context.user_data["stars"] = int(q.data.split("_")[1])
-    await q.edit_message_text("Напишите отзыв (или /skip):")
+    await q.edit_message_text("📝 Напишите текст отзыва (или /skip):")
     return REVIEW_TEXT
 
 async def review_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     REVIEWS.append({"user_id": update.effective_user.id, "username": update.effective_user.username or update.effective_user.full_name,
                     "stars": context.user_data.get("stars", 5), "text": update.message.text, "date": time.strftime("%Y-%m-%d %H:%M")})
     storage(REVIEWS_FILE, REVIEWS)
-    await update.message.reply_text("Спасибо за отзыв!")
+    await update.message.reply_text("✅ Спасибо за отзыв! Он появится в разделе «Отзывы».")
     return ConversationHandler.END
 
 async def review_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -254,63 +269,65 @@ async def review_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if q.data == "samples":
-        await q.edit_message_text("Пробники\n\nНапишите администратору.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Написать", url=f"tg://user?id={os.getenv('ADMIN_CONTACT_ID')}")], [HOME_BTN]]))
+        await q.edit_message_text("🎁 *Пробники*\n\nЧтобы получить бесплатный пробник, напишите администратору.\nОн лично отправит вам подарок!", parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Написать админу", url=f"tg://user?id={os.getenv('ADMIN_CONTACT_ID')}")], [HOME_BTN]]))
     else:
-        await q.edit_message_text("Техподдержка\n\nПишите: @IchikavaAdmin", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
+        await q.edit_message_text("🆘 *Техподдержка*\n\nЕсли у вас возникли вопросы или проблемы с заказом, пишите:\n@IchikavaAdmin", parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
 
 def admin_main_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("Добавить товар", callback_data="adm_add")],
-                                 [InlineKeyboardButton("Редактировать", callback_data="adm_edit")],
-                                 [InlineKeyboardButton("Список", callback_data="adm_list")], [HOME_BTN]])
+    return InlineKeyboardMarkup([[InlineKeyboardButton("➕ Добавить товар", callback_data="adm_add")],
+                                 [InlineKeyboardButton("✏️ Редактировать", callback_data="adm_edit")],
+                                 [InlineKeyboardButton("📋 Список", callback_data="adm_list")], [HOME_BTN]])
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    if not is_admin(q.from_user.id): await q.answer("Нет доступа!"); return
-    await q.edit_message_text("Админ-панель", reply_markup=admin_main_keyboard())
+    if not is_admin(q.from_user.id): await q.answer("⛔ Нет доступа!"); return
+    await q.edit_message_text("⚙️ *Админ-панель*\n\nВыберите действие:", parse_mode="Markdown", reply_markup=admin_main_keyboard())
 
 async def admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not is_admin(q.from_user.id): return
-    if not PRODUCTS: await q.edit_message_text("Товаров нет.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="admin_panel")]])); return
-    text = "Товары:\n" + "\n".join(f"{p['name']} — {p['price']} руб. ({len(p.get('items',[]))} шт.)" for p in PRODUCTS)
-    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="admin_panel")]]))
+    if not PRODUCTS: await q.edit_message_text("📋 Товаров нет.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])); return
+    text = "📋 *Товары:*\n" + "\n".join(f"▫ *{p['name']}* — {p['price']} руб. ({len(p.get('items',[]))} шт.)" for p in PRODUCTS)
+    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]))
 
 async def adm_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not is_admin(q.from_user.id): return
     context.user_data["new"] = {"items": []}
-    await q.edit_message_text("Шаг 1/3 — Название:"); return ADD_NAME
+    await q.edit_message_text("➕ *Добавление товара*\n\nШаг 1/3 — Введите название товара:", parse_mode="Markdown"); return ADD_NAME
 
 async def adm_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new"]["name"] = update.message.text.strip()
-    await update.message.reply_text("Шаг 2/3 — Цена:"); return ADD_PRICE
+    await update.message.reply_text("Шаг 2/3 — Введите цену в рублях (только число):"); return ADD_PRICE
 
 async def adm_add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: context.user_data["new"]["price"] = int(update.message.text.strip())
-    except: await update.message.reply_text("Число!"); return ADD_PRICE
-    await update.message.reply_text("Шаг 3/3 — Текст:"); return ADD_DELIVERY_TEXT
+    except: await update.message.reply_text("⚠️ Цена должна быть числом. Введите ещё раз:"); return ADD_PRICE
+    await update.message.reply_text("Шаг 3/3 — Введите текст, который получит покупатель:"); return ADD_DELIVERY_TEXT
 
 async def adm_add_delivery_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new"]["items"].append({"text": update.message.text.strip(), "photo": None})
-    kb = [[InlineKeyboardButton("Пропустить фото", callback_data="adm_skip_photo")], [InlineKeyboardButton("Завершить", callback_data="adm_finish")]]
-    await update.message.reply_text("Фото или Пропустить:", reply_markup=InlineKeyboardMarkup(kb))
+    kb = [[InlineKeyboardButton("⏭ Пропустить фото", callback_data="adm_skip_photo")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
+    await update.message.reply_text("🖼 Отправьте фото или нажмите «Пропустить»:", reply_markup=InlineKeyboardMarkup(kb))
     return ADD_DELIVERY_PHOTO
 
 async def adm_add_delivery_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new"]["items"][-1]["photo"] = update.message.photo[-1].file_id
-    kb = [[InlineKeyboardButton("Ещё", callback_data="adm_add_more")], [InlineKeyboardButton("Завершить", callback_data="adm_finish")]]
-    await update.message.reply_text("Ещё или Завершить?", reply_markup=InlineKeyboardMarkup(kb))
+    kb = [[InlineKeyboardButton("➕ Ещё экземпляр", callback_data="adm_add_more")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
+    await update.message.reply_text("✅ Фото добавлено! Добавить ещё экземпляр или завершить?", reply_markup=InlineKeyboardMarkup(kb))
     return ADD_DELIVERY_PHOTO
 
 async def adm_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    kb = [[InlineKeyboardButton("Ещё", callback_data="adm_add_more")], [InlineKeyboardButton("Завершить", callback_data="adm_finish")]]
-    await q.edit_message_text("Ещё или Завершить?", reply_markup=InlineKeyboardMarkup(kb))
+    kb = [[InlineKeyboardButton("➕ Ещё экземпляр", callback_data="adm_add_more")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
+    await q.edit_message_text("Добавить ещё экземпляр или завершить?", reply_markup=InlineKeyboardMarkup(kb))
     return ADD_DELIVERY_PHOTO
 
 async def adm_add_more(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    await q.edit_message_text("Текст следующего:"); return ADD_DELIVERY_TEXT
+    await q.edit_message_text("📝 Введите текст для следующего экземпляра:"); return ADD_DELIVERY_TEXT
 
 async def adm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
@@ -320,33 +337,33 @@ async def _save_new_product(update, context, query=None):
     global PRODUCTS
     np = context.user_data.pop("new"); np["id"] = get_next_id(); PRODUCTS.append(np)
     storage(PRODUCTS_FILE, PRODUCTS)
-    text = f"Товар {np['name']} добавлен ({len(np.get('items',[]))} шт.)"
-    if query: await query.edit_message_text(text, reply_markup=admin_main_keyboard())
-    else: await update.message.reply_text(text, reply_markup=admin_main_keyboard())
+    text = f"✅ Товар *{np['name']}* успешно добавлен! (экземпляров: {len(np.get('items',[]))})"
+    if query: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
+    else: await update.message.reply_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
 async def adm_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for k in ("new", "edit_product_id", "edit_field"): context.user_data.pop(k, None)
-    await update.message.reply_text("Отменено.", reply_markup=admin_main_keyboard())
+    await update.message.reply_text("❌ Отменено.", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
 async def adm_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not is_admin(q.from_user.id): return
-    if not PRODUCTS: await q.edit_message_text("Нет товаров.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
+    if not PRODUCTS: await q.edit_message_text("📋 Нет товаров.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
     kb = [[InlineKeyboardButton(f"{p['name']} ({len(p.get('items',[]))} шт.)", callback_data=f"esel_{p['id']}")] for p in PRODUCTS]
-    kb.append([InlineKeyboardButton("Назад", callback_data="adm_cancel_cb")])
-    await q.edit_message_text("Выберите:", reply_markup=InlineKeyboardMarkup(kb))
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="adm_cancel_cb")])
+    await q.edit_message_text("✏️ Выберите товар для редактирования:", reply_markup=InlineKeyboardMarkup(kb))
     return EDIT_SELECT
 
 async def adm_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     p = next((p for p in PRODUCTS if p["id"] == q.data.split("_", 1)[1]), None)
-    if not p: await q.answer("Не найден!"); return ConversationHandler.END
+    if not p: await q.answer("❌ Товар не найден!"); return ConversationHandler.END
     context.user_data["edit_id"] = p["id"]
-    kb = [[InlineKeyboardButton("Название", callback_data="ef_name")], [InlineKeyboardButton("Цена", callback_data="ef_price")],
-          [InlineKeyboardButton("Удалить", callback_data="ef_delete")], [InlineKeyboardButton("Назад", callback_data="adm_cancel_cb")]]
-    await q.edit_message_text(f"{p['name']} — {p['price']} руб.\nЧто изменить?", reply_markup=InlineKeyboardMarkup(kb))
+    kb = [[InlineKeyboardButton("📝 Название", callback_data="ef_name")], [InlineKeyboardButton("💰 Цена", callback_data="ef_price")],
+          [InlineKeyboardButton("🗑 Удалить", callback_data="ef_delete")], [InlineKeyboardButton("🔙 Назад", callback_data="adm_cancel_cb")]]
+    await q.edit_message_text(f"✏️ *{p['name']}* — {p['price']} руб. ({len(p.get('items',[]))} шт.)\n\nЧто изменить?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     return EDIT_FIELD
 
 async def adm_edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -355,28 +372,28 @@ async def adm_edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     f, pid = q.data.split("_", 1)[1], context.user_data.get("edit_id")
     if f == "delete":
         PRODUCTS = [p for p in PRODUCTS if p["id"] != pid]; storage(PRODUCTS_FILE, PRODUCTS)
-        await q.edit_message_text("Удалён.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
+        await q.edit_message_text("🗑 Товар удалён.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
     context.user_data["edit_field"] = f
-    await q.edit_message_text("Введите новое значение:" if f != "price" else "Цена (число):")
+    await q.edit_message_text("📝 Введите новое значение:" if f != "price" else "💰 Введите новую цену (число):")
     return EDIT_VALUE_TEXT
 
 async def adm_edit_value_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global PRODUCTS
     p = next((p for p in PRODUCTS if p["id"] == context.user_data.get("edit_id")), None)
-    if not p: await update.message.reply_text("Не найден."); return ConversationHandler.END
+    if not p: await update.message.reply_text("❌ Товар не найден."); return ConversationHandler.END
     v = update.message.text.strip()
     if context.user_data.get("edit_field") == "price":
         try: v = int(v)
-        except: await update.message.reply_text("Число!"); return EDIT_VALUE_TEXT
+        except: await update.message.reply_text("⚠️ Цена должна быть числом!"); return EDIT_VALUE_TEXT
     p[context.user_data["edit_field"]] = v
     storage(PRODUCTS_FILE, PRODUCTS)
-    await update.message.reply_text("Сохранено!", reply_markup=admin_main_keyboard())
+    await update.message.reply_text("✅ Сохранено!", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
 async def adm_cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     for k in ("new", "edit_id", "edit_field"): context.user_data.pop(k, None)
-    await q.edit_message_text("Админ-панель", reply_markup=admin_main_keyboard())
+    await q.edit_message_text("⚙️ *Админ-панель*\n\nВыберите действие:", parse_mode="Markdown", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
 def main():
@@ -428,7 +445,7 @@ def main():
 
     app.add_error_handler(error_handler)
     keep_alive()
-    print("Бот запущен!")
+    print("✅ Бот запущен!")
     app.run_polling()
 
 if __name__ == "__main__":
