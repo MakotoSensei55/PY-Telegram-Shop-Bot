@@ -34,7 +34,7 @@ def keep_alive():
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
-REVIEWS_LINK = "https://t.me/+2_l8yp70MUQ3OWJh"
+REVIEWS_LINK = "https://t.me/yamadarew?direct"
 
 PRODUCTS_FILE = "products.json"
 PENDING_FILE = "pending_orders.json"
@@ -95,7 +95,7 @@ def main_menu_keyboard(uid):
     k = [
         [InlineKeyboardButton("🛍 Каталог", callback_data="catalog"), InlineKeyboardButton("🛒 Корзина", callback_data="view_cart")],
         [InlineKeyboardButton("📋 Мои заказы", callback_data="my_orders"), InlineKeyboardButton("🎁 Пробники", callback_data="samples")],
-        [InlineKeyboardButton("💬 Отзывы", url=REVIEWS_LINK), InlineKeyboardButton("🆘 Поддержка", callback_data="support")],
+        [InlineKeyboardButton("💬 Отзывы", url="https://t.me/yamadarew?direct"), InlineKeyboardButton("🆘 Поддержка", callback_data="support")],
     ]
     if is_admin(uid): k.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(k)
