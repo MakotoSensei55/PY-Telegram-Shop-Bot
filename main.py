@@ -34,9 +34,7 @@ def keep_alive():
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
-BITCOIN_ADDRESSES = [addr.strip() for addr in os.getenv("BITCOIN_ADDRESSES", "").split(",") if addr.strip()]
-if not BITCOIN_ADDRESSES:
-    BITCOIN_ADDRESSES = [BITCOIN_ADDRESS] if BITCOIN_ADDRESS else []
+BITCOIN_ADDRESS_2 = os.getenv("BITCOIN_ADDRESS_2", "")
 REVIEWS_LINK = "https://t.me/yamadarew?direct"
 
 PRODUCTS_FILE = "products.json"
@@ -74,14 +72,13 @@ def get_next_id():
 def is_admin(uid): return uid in ADMIN_IDS
 
 def get_address_for_order():
-    """Выбирает адрес: если нет активных заказов — первый, если один активный — второй, иначе первый."""
-    active = len(pending_orders)
-    if active == 0:
-        return BITCOIN_ADDRESSES[0]
-    elif active == 1:
-        return BITCOIN_ADDRESSES[1] if len(BITCOIN_ADDRESSES) > 1 else BITCOIN_ADDRESSES[0]
+    """Первый адрес, если активных заказов 0. Второй — если 1 или больше."""
+    if len(pending_orders) == 0:
+        return BITCOIN_ADDRESS
+    elif BITCOIN_ADDRESS_2:
+        return BITCOIN_ADDRESS_2
     else:
-        return BITCOIN_ADDRESSES[0]
+        return BITCOIN_ADDRESS
 
 async def delete_extra_msgs(context, chat_id):
     for msg_id in context.user_data.pop("extra_msgs", []):
