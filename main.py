@@ -168,6 +168,11 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if total == 0:
         user_carts[uid] = []
         for p in cart: await deliver(uid, p, context)
+        for aid in ADMIN_IDS:
+            try:
+                cart_text = "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in cart)
+                await context.bot.send_message(chat_id=aid, text=f"🎁 *Бесплатный товар выдан!*\n\n👤 Покупатель: `{uid}`\n🛒 Товары:\n{cart_text}", parse_mode="Markdown")
+            except: pass
         await q.edit_message_text("🎁 Бесплатный товар отправлен!", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("💬 Оставить отзыв", url=REVIEWS_LINK)]])
         await context.bot.send_message(chat_id=uid, text="💬 Понравился магазин? Оставьте отзыв в нашем канале!", reply_markup=kb)
