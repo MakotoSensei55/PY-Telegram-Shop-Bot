@@ -34,6 +34,9 @@ def keep_alive():
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
+BITCOIN_ADDRESSES = [addr.strip() for addr in os.getenv("BITCOIN_ADDRESSES", "").split(",") if addr.strip()]
+if not BITCOIN_ADDRESSES:
+    BITCOIN_ADDRESSES = [BITCOIN_ADDRESS] if BITCOIN_ADDRESS else []
 REVIEWS_LINK = "https://t.me/yamadarew?direct"
 
 PRODUCTS_FILE = "products.json"
@@ -69,6 +72,12 @@ def get_next_id():
     return str(max(int(p["id"]) for p in PRODUCTS) + 1) if PRODUCTS else "1"
 
 def is_admin(uid): return uid in ADMIN_IDS
+
+def get_address_for_order():
+    """Первый адрес, если активных заказов меньше 2. Иначе второй."""
+    if len(pending_orders) < 2:
+        return BITCOIN_ADDRESSES[0]
+    return BITCOIN_ADDRESSES[1] if len(BITCOIN_ADDRESSES) > 1 else BITCOIN_ADDRESSES[0]
 
 async def delete_extra_msgs(context, chat_id):
     for msg_id in context.user_data.pop("extra_msgs", []):
@@ -182,8 +191,9 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if rate <= 0: await q.edit_message_text("❌ Не удалось получить курс.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
     btc = round(rub_to_btc(total, rate), 5)
     if 0 < btc < 0.00001: btc = 0.00001
-    sat = btc_to_satoshi(btc); base = await get_received_satoshi(BITCOIN_ADDRESS)
-    pending_orders[str(uid)] = {"amount_btc": btc, "amount_rub": total, "cart": list(cart), "created_at": time.time(), "expected_satoshi": sat, "baseline_satoshi": base if base >= 0 else 0}
+    order_address = get_address_for_order()
+    sat = btc_to_satoshi(btc); base = await get_received_satoshi(order_address)
+    pending_orders[str(uid)] = {"amount_btc": btc, "amount_rub": total, "cart": list(cart), "created_at": time.time(), "expected_satoshi": sat, "baseline_satoshi": base if base >= 0 else 0, "address": order_address}
     storage(PENDING_FILE, pending_orders); user_carts[uid] = []
     await q.edit_message_text(
         f"₿ *Оплата Bitcoin*\n\n"
@@ -196,7 +206,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Время ожидания: до 60 минут.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]]))
-    await context.bot.send_message(chat_id=uid, text=BITCOIN_ADDRESS)
+    await context.bot.send_message(chat_id=uid, text=order_address)
     await context.bot.send_message(chat_id=uid, text=f"ℹ️ *Инструкция по оплате:*\n\n1️⃣ Отправьте точно `{btc:.8f}` BTC на адрес выше\n2️⃣ Комиссия сети — за ваш счёт\n3️⃣ Бот проверяет каждые 30 сек.\n4️⃣ Товар будет отправлен *сразу после обнаружения транзакции*\n\n⚡ *Скорость: до 1 минуты*", parse_mode="Markdown")
     asyncio.create_task(check_payment_loop(uid, context.application))
 
@@ -214,14 +224,13 @@ async def check_payment_loop(uid, app):
         if time.time() - o["created_at"] > ORDER_TIMEOUT:
             pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
             await app.bot.send_message(chat_id=uid, text="⌛ Время ожидания истекло (1 час).\nЗаказ отменён."); break
-        r = await get_received_satoshi(BITCOIN_ADDRESS)
+        r = await get_received_satoshi(o.get("address", BITCOIN_ADDRESS))
         if r < 0: continue
         if r - o.get("baseline_satoshi", 0) >= o["expected_satoshi"] - int(o["expected_satoshi"] * 0.05):
             pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
             await app.bot.send_message(chat_id=uid, text="✅ *Оплата получена!* Отправляю ваши товары...", parse_mode="Markdown")
             for p in o["cart"]: await deliver(uid, p, app)
             
-            # Записываем продажу в историю
             sale = {
                 "user_id": uid,
                 "cart": [{"name": p["name"], "price": p["price"]} for p in o["cart"]],
@@ -249,7 +258,7 @@ async def show_my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📋 *Ваш активный заказ*\n\n🛒 Товары:\n{items}\n\n"
         f"💰 Сумма: {o['amount_rub']} руб.\n"
         f"₿ К оплате: `{o['amount_btc']:.8f}` BTC\n\n"
-        f"👛 *Адрес:*\n`{BITCOIN_ADDRESS}`\n\n"
+        f"👛 *Адрес:*\n`{o.get('address', BITCOIN_ADDRESS)}`\n\n"
         f"⏳ Осталось: {max(0, ORDER_TIMEOUT - int(time.time() - o['created_at'])) // 60} мин.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]]))
