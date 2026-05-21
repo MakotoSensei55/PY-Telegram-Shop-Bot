@@ -38,6 +38,7 @@ REVIEWS_LINK = "https://t.me/yamadarew?direct"
 
 PRODUCTS_FILE = "products.json"
 PENDING_FILE = "pending_orders.json"
+SALES_FILE = "sales.json"
 
 def storage(filename, data=None):
     if data is not None:
@@ -56,6 +57,7 @@ PRODUCTS = storage(PRODUCTS_FILE) or [
 ]
 
 pending_orders = storage(PENDING_FILE) or {}
+SALES = storage(SALES_FILE) or []
 user_carts = {}
 
 (ADD_NAME, ADD_PRICE, ADD_DELIVERY_TEXT, ADD_DELIVERY_PHOTO,
@@ -213,6 +215,18 @@ async def check_payment_loop(uid, app):
             pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
             await app.bot.send_message(chat_id=uid, text="✅ *Оплата получена!* Отправляю ваши товары...", parse_mode="Markdown")
             for p in o["cart"]: await deliver(uid, p, app)
+            
+            # Записываем продажу в историю
+            sale = {
+                "user_id": uid,
+                "cart": [{"name": p["name"], "price": p["price"]} for p in o["cart"]],
+                "total_rub": o["amount_rub"],
+                "total_btc": o["amount_btc"],
+                "date": time.strftime("%Y-%m-%d %H:%M")
+            }
+            SALES.append(sale)
+            storage(SALES_FILE, SALES)
+            
             cart_text = "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in o["cart"])
             for aid in ADMIN_IDS:
                 try: await app.bot.send_message(chat_id=aid, text=f"💰 *Новая оплата!*\n\n👤 Покупатель: `{uid}`\n🛒 Товары:\n{cart_text}\n💵 Сумма: {o['amount_rub']} ₽ / `{o['amount_btc']:.8f}` BTC", parse_mode="Markdown")
@@ -270,8 +284,11 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(q.from_user.id): return
     
     active = len(pending_orders)
+    total_sales = len(SALES)
+    total_rub = sum(s["total_rub"] for s in SALES)
     
     text = f"📊 *Статистика магазина*\n\n"
+    text += f"💰 Всего продаж: {total_sales} на {total_rub} руб.\n"
     text += f"🛒 Активных заказов: {active}\n"
     text += f"📦 Товаров в каталоге: {len(PRODUCTS)}\n"
     
