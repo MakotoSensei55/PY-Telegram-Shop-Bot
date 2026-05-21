@@ -74,10 +74,14 @@ def get_next_id():
 def is_admin(uid): return uid in ADMIN_IDS
 
 def get_address_for_order():
-    """Первый адрес, если активных заказов меньше 2. Иначе второй."""
-    if len(pending_orders) < 2:
+    """Выбирает адрес: если нет активных заказов — первый, если один активный — второй, иначе первый."""
+    active = len(pending_orders)
+    if active == 0:
         return BITCOIN_ADDRESSES[0]
-    return BITCOIN_ADDRESSES[1] if len(BITCOIN_ADDRESSES) > 1 else BITCOIN_ADDRESSES[0]
+    elif active == 1:
+        return BITCOIN_ADDRESSES[1] if len(BITCOIN_ADDRESSES) > 1 else BITCOIN_ADDRESSES[0]
+    else:
+        return BITCOIN_ADDRESSES[0]
 
 async def delete_extra_msgs(context, chat_id):
     for msg_id in context.user_data.pop("extra_msgs", []):
@@ -207,7 +211,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]]))
     await context.bot.send_message(chat_id=uid, text=order_address)
-    await context.bot.send_message(chat_id=uid, text=f"ℹ️ *Инструкция по оплате:*\n\n1️⃣ Отправьте точно `{btc:.8f}` BTC на адрес выше\n2️⃣ Комиссия сети — за ваш счёт\n3️⃣ Бот проверяет каждые 30 сек.\n4️⃣ Товар будет отправлен *сразу после обнаружения транзакции*\n\n⚡ *Скорость: до 1 минуты*", parse_mode="Markdown")
+    await context.bot.send_message(chat_id=uid, text=f"ℹ️ *Инструкция по оплате:*\n\n1️⃣ Отправьте точно `{btc:.8f}` BTC на адрес выше\n2️⃣ Бот проверяет каждые 30 сек.\n3️⃣ Товар будет отправлен *сразу после обнаружения транзакции*\n\n⚡ *Скорость: до 1 минуты*", parse_mode="Markdown")
     asyncio.create_task(check_payment_loop(uid, context.application))
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
