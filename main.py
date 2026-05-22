@@ -37,28 +37,34 @@ BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
 BITCOIN_ADDRESS_2 = os.getenv("BITCOIN_ADDRESS_2", "")
 REVIEWS_LINK = "https://t.me/yamadarew?direct"
 
-PRODUCTS_FILE = "products.json"
-PENDING_FILE = "pending_orders.json"
-SALES_FILE = "sales.json"
+JSONBIN_API_KEY = os.getenv("JSONBIN_API_KEY", "$2a$10$uxDB6hgHmuCDGDQ335QkLuzjj4epmf/h2vgV/CX6tcQ70RTKXEf3O")
+JSONBIN_PRODUCTS_ID = os.getenv("JSONBIN_PRODUCTS_ID", "6a103150ee5a733b12ff50e1")
+JSONBIN_PENDING_ID = os.getenv("JSONBIN_PENDING_ID", "6a1032766610dd3ae888aeb5")
+JSONBIN_SALES_ID = os.getenv("JSONBIN_SALES_ID", "6a1032236610dd3ae888acd4")
 
-def storage(filename, data=None):
-    if data is not None:
-        with open(filename, "w") as f:
-            json.dump(data, f)
-    elif os.path.exists(filename):
-        with open(filename, "r") as f:
-            return json.load(f)
-    return None
+JSONBIN_HEADERS = {
+    "X-Master-Key": JSONBIN_API_KEY,
+    "Content-Type": "application/json",
+}
 
-PRODUCTS = storage(PRODUCTS_FILE) or [
-    {"id": "1", "name": "🎨 Стикерпак", "price": 300, "items": [{"text": "Стикерпак №1", "photo": None}, {"text": "Стикерпак №2", "photo": None}]},
-    {"id": "2", "name": "📘 Гайд по Python", "price": 500, "items": [{"text": "Гайд по Python (полный)", "photo": None}]},
-    {"id": "3", "name": "👑 Премиум доступ", "price": 1000, "items": [{"text": "Доступ на месяц", "photo": None}, {"text": "Доступ на год", "photo": None}]},
-    {"id": "test", "name": "🧪 Тестовый товар", "price": 0, "items": [{"text": "Тестовый экземпляр 1", "photo": None}, {"text": "Тестовый экземпляр 2", "photo": None}]},
-]
+async def jsonbin_read(bin_id):
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"https://api.jsonbin.io/v3/b/{bin_id}/latest", headers=JSONBIN_HEADERS)
+            return r.json()["record"]
+    except:
+        return None
 
-pending_orders = storage(PENDING_FILE) or {}
-SALES = storage(SALES_FILE) or []
+async def jsonbin_write(bin_id, data):
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            await c.put(f"https://api.jsonbin.io/v3/b/{bin_id}", headers=JSONBIN_HEADERS, json=data)
+    except:
+        pass
+
+PRODUCTS = []
+pending_orders = {}
+SALES = []
 user_carts = {}
 
 (ADD_NAME, ADD_PRICE, ADD_DELIVERY_TEXT, ADD_DELIVERY_PHOTO,
@@ -72,7 +78,6 @@ def get_next_id():
 def is_admin(uid): return uid in ADMIN_IDS
 
 def get_address_for_order():
-    """Первый адрес, если активных заказов 0. Второй — если 1 или больше."""
     if len(pending_orders) == 0:
         return BITCOIN_ADDRESS
     elif BITCOIN_ADDRESS_2:
@@ -161,7 +166,7 @@ async def deliver(uid, product, context):
     if product.get("items"):
         item = product["items"].pop(0); text, photo = item.get("text") or f"🎁 Товар «{product['name']}»!", item.get("photo")
         if not product["items"]: PRODUCTS.remove(product)
-        storage(PRODUCTS_FILE, PRODUCTS)
+        await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
     else: text, photo = f"🎁 Товар «{product['name']}»!", None
     if photo: await context.bot.send_photo(chat_id=uid, photo=photo, caption=text)
     else: await context.bot.send_message(chat_id=uid, text=text)
@@ -195,7 +200,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_address = get_address_for_order()
     sat = btc_to_satoshi(btc); base = await get_received_satoshi(order_address)
     pending_orders[str(uid)] = {"amount_btc": btc, "amount_rub": total, "cart": list(cart), "created_at": time.time(), "expected_satoshi": sat, "baseline_satoshi": base if base >= 0 else 0, "address": order_address}
-    storage(PENDING_FILE, pending_orders); user_carts[uid] = []
+    await jsonbin_write(JSONBIN_PENDING_ID, pending_orders); user_carts[uid] = []
     await q.edit_message_text(
         f"₿ *Оплата Bitcoin*\n\n"
         f"Сумма к оплате:\n`{btc:.8f}` BTC\n\n"
@@ -213,7 +218,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    pending_orders.pop(str(q.from_user.id), None); storage(PENDING_FILE, pending_orders)
+    pending_orders.pop(str(q.from_user.id), None); await jsonbin_write(JSONBIN_PENDING_ID, pending_orders)
     await delete_extra_msgs(context, q.message.chat_id)
     await q.edit_message_text("❌ Заказ отменён.\n\nВы можете начать заново.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 Каталог", callback_data="catalog")], [HOME_BTN]]))
 
@@ -223,12 +228,12 @@ async def check_payment_loop(uid, app):
         o = pending_orders.get(str(uid))
         if not o: break
         if time.time() - o["created_at"] > ORDER_TIMEOUT:
-            pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
+            pending_orders.pop(str(uid), None); await jsonbin_write(JSONBIN_PENDING_ID, pending_orders)
             await app.bot.send_message(chat_id=uid, text="⌛ Время ожидания истекло (1 час).\nЗаказ отменён."); break
         r = await get_received_satoshi(o.get("address", BITCOIN_ADDRESS))
         if r < 0: continue
         if r - o.get("baseline_satoshi", 0) >= o["expected_satoshi"] - int(o["expected_satoshi"] * 0.05):
-            pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
+            pending_orders.pop(str(uid), None); await jsonbin_write(JSONBIN_PENDING_ID, pending_orders)
             await app.bot.send_message(chat_id=uid, text="✅ *Оплата получена!* Отправляю ваши товары...", parse_mode="Markdown")
             for p in o["cart"]: await deliver(uid, p, app)
             
@@ -240,7 +245,7 @@ async def check_payment_loop(uid, app):
                 "date": time.strftime("%Y-%m-%d %H:%M")
             }
             SALES.append(sale)
-            storage(SALES_FILE, SALES)
+            await jsonbin_write(JSONBIN_SALES_ID, SALES)
             
             cart_text = "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in o["cart"])
             for aid in ADMIN_IDS:
@@ -353,7 +358,7 @@ async def adm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _save_new_product(update, context, query=None):
     global PRODUCTS
     np = context.user_data.pop("new"); np["id"] = get_next_id(); PRODUCTS.append(np)
-    storage(PRODUCTS_FILE, PRODUCTS)
+    await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
     text = f"✅ Товар *{np['name']}* успешно добавлен! (экземпляров: {len(np.get('items',[]))})"
     if query: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
     else: await update.message.reply_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
@@ -388,7 +393,7 @@ async def adm_edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     f, pid = q.data.split("_", 1)[1], context.user_data.get("edit_id")
     if f == "delete":
-        PRODUCTS = [p for p in PRODUCTS if p["id"] != pid]; storage(PRODUCTS_FILE, PRODUCTS)
+        PRODUCTS = [p for p in PRODUCTS if p["id"] != pid]; await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
         await q.edit_message_text("🗑 Товар удалён.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
     context.user_data["edit_field"] = f
     await q.edit_message_text("📝 Введите новое значение:" if f != "price" else "💰 Введите новую цену (число):")
@@ -403,7 +408,7 @@ async def adm_edit_value_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         try: v = int(v)
         except: await update.message.reply_text("⚠️ Цена должна быть числом!"); return EDIT_VALUE_TEXT
     p[context.user_data["edit_field"]] = v
-    storage(PRODUCTS_FILE, PRODUCTS)
+    await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
     await update.message.reply_text("✅ Сохранено!", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
