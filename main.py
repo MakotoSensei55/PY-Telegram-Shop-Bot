@@ -37,34 +37,22 @@ BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
 BITCOIN_ADDRESS_2 = os.getenv("BITCOIN_ADDRESS_2", "")
 REVIEWS_LINK = "https://t.me/yamadarew?direct"
 
-JSONBIN_API_KEY = os.getenv("JSONBIN_API_KEY", "$2a$10$uxDB6hgHmuCDGDQ335QkLuzjj4epmf/h2vgV/CX6tcQ70RTKXEf3O")
-JSONBIN_PRODUCTS_ID = os.getenv("JSONBIN_PRODUCTS_ID", "6a103150ee5a733b12ff50e1")
-JSONBIN_PENDING_ID = os.getenv("JSONBIN_PENDING_ID", "6a1032766610dd3ae888aeb5")
-JSONBIN_SALES_ID = os.getenv("JSONBIN_SALES_ID", "6a1032236610dd3ae888acd4")
+PRODUCTS_FILE = "products.json"
+PENDING_FILE = "pending_orders.json"
+SALES_FILE = "sales.json"
 
-JSONBIN_HEADERS = {
-    "X-Master-Key": JSONBIN_API_KEY,
-    "Content-Type": "application/json",
-}
+def storage(filename, data=None):
+    if data is not None:
+        with open(filename, "w") as f:
+            json.dump(data, f)
+    elif os.path.exists(filename):
+        with open(filename, "r") as f:
+            return json.load(f)
+    return None
 
-async def jsonbin_read(bin_id):
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"https://api.jsonbin.io/v3/b/{bin_id}/latest", headers=JSONBIN_HEADERS)
-            return r.json()["record"]
-    except:
-        return None
-
-async def jsonbin_write(bin_id, data):
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            await c.put(f"https://api.jsonbin.io/v3/b/{bin_id}", headers=JSONBIN_HEADERS, json=data)
-    except:
-        pass
-
-PRODUCTS = []
-pending_orders = {}
-SALES = []
+PRODUCTS = storage(PRODUCTS_FILE) or []
+pending_orders = storage(PENDING_FILE) or {}
+SALES = storage(SALES_FILE) or []
 user_carts = {}
 
 (ADD_NAME, ADD_PRICE, ADD_DELIVERY_TEXT, ADD_DELIVERY_PHOTO,
@@ -164,12 +152,18 @@ async def clear_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def deliver(uid, product, context):
     if product.get("items"):
-        item = product["items"].pop(0); text, photo = item.get("text") or f"🎁 Товар «{product['name']}»!", item.get("photo")
+        item = product["items"].pop(0); text, photo = item.get("text"), item.get("photo")
         if not product["items"]: PRODUCTS.remove(product)
-        await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
-    else: text, photo = f"🎁 Товар «{product['name']}»!", None
-    if photo: await context.bot.send_photo(chat_id=uid, photo=photo, caption=text)
-    else: await context.bot.send_message(chat_id=uid, text=text)
+        storage(PRODUCTS_FILE, PRODUCTS)
+    else:
+        text, photo = f"🎁 Товар «{product['name']}»!", None
+    if photo:
+        if photo.startswith("http"):
+            await context.bot.send_photo(chat_id=uid, photo=photo, caption=text)
+        else:
+            await context.bot.send_photo(chat_id=uid, photo=photo, caption=text)
+    else:
+        await context.bot.send_message(chat_id=uid, text=text)
 
 async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
@@ -200,7 +194,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_address = get_address_for_order()
     sat = btc_to_satoshi(btc); base = await get_received_satoshi(order_address)
     pending_orders[str(uid)] = {"amount_btc": btc, "amount_rub": total, "cart": list(cart), "created_at": time.time(), "expected_satoshi": sat, "baseline_satoshi": base if base >= 0 else 0, "address": order_address}
-    await jsonbin_write(JSONBIN_PENDING_ID, pending_orders); user_carts[uid] = []
+    storage(PENDING_FILE, pending_orders); user_carts[uid] = []
     await q.edit_message_text(
         f"₿ *Оплата Bitcoin*\n\n"
         f"Сумма к оплате:\n`{btc:.8f}` BTC\n\n"
@@ -218,7 +212,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    pending_orders.pop(str(q.from_user.id), None); await jsonbin_write(JSONBIN_PENDING_ID, pending_orders)
+    pending_orders.pop(str(q.from_user.id), None); storage(PENDING_FILE, pending_orders)
     await delete_extra_msgs(context, q.message.chat_id)
     await q.edit_message_text("❌ Заказ отменён.\n\nВы можете начать заново.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 Каталог", callback_data="catalog")], [HOME_BTN]]))
 
@@ -228,12 +222,12 @@ async def check_payment_loop(uid, app):
         o = pending_orders.get(str(uid))
         if not o: break
         if time.time() - o["created_at"] > ORDER_TIMEOUT:
-            pending_orders.pop(str(uid), None); await jsonbin_write(JSONBIN_PENDING_ID, pending_orders)
+            pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
             await app.bot.send_message(chat_id=uid, text="⌛ Время ожидания истекло (1 час).\nЗаказ отменён."); break
         r = await get_received_satoshi(o.get("address", BITCOIN_ADDRESS))
         if r < 0: continue
         if r - o.get("baseline_satoshi", 0) >= o["expected_satoshi"] - int(o["expected_satoshi"] * 0.05):
-            pending_orders.pop(str(uid), None); await jsonbin_write(JSONBIN_PENDING_ID, pending_orders)
+            pending_orders.pop(str(uid), None); storage(PENDING_FILE, pending_orders)
             await app.bot.send_message(chat_id=uid, text="✅ *Оплата получена!* Отправляю ваши товары...", parse_mode="Markdown")
             for p in o["cart"]: await deliver(uid, p, app)
             
@@ -245,7 +239,7 @@ async def check_payment_loop(uid, app):
                 "date": time.strftime("%Y-%m-%d %H:%M")
             }
             SALES.append(sale)
-            await jsonbin_write(JSONBIN_SALES_ID, SALES)
+            storage(SALES_FILE, SALES)
             
             cart_text = "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in o["cart"])
             for aid in ADMIN_IDS:
@@ -327,7 +321,7 @@ async def adm_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def adm_add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: context.user_data["new"]["price"] = int(update.message.text.strip())
     except: await update.message.reply_text("⚠️ Цена должна быть числом. Введите ещё раз:"); return ADD_PRICE
-    await update.message.reply_text("Шаг 3/3 — Введите текст, который получит покупатель:"); return ADD_DELIVERY_TEXT
+    await update.message.reply_text("Шаг 3/3 — Введите ссылку на товар:"); return ADD_DELIVERY_TEXT
 
 async def adm_add_delivery_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -338,64 +332,9 @@ async def adm_add_delivery_text(update: Update, context: ContextTypes.DEFAULT_TY
         product = next((p for p in PRODUCTS if p["id"] == prod_id), None)
         if product:
             product.setdefault("items", []).append({"text": text, "photo": None})
-            await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
-    kb = [[InlineKeyboardButton("⏭ Пропустить фото", callback_data="adm_skip_photo")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
-    await update.message.reply_text("🖼 Отправьте фото или нажмите «Пропустить»:", reply_markup=InlineKeyboardMarkup(kb))
-    return ADD_DELIVERY_PHOTO
-
-async def adm_add_delivery_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if "new" in context.user_data and context.user_data["new"] and "name" in context.user_data["new"]:
-        context.user_data["new"]["items"][-1]["photo"] = update.message.photo[-1].file_id
-    else:
-        prod_id = context.user_data.get("edit_id")
-        product = next((p for p in PRODUCTS if p["id"] == prod_id), None)
-        if product and product.get("items"):
-            product["items"][-1]["photo"] = update.message.photo[-1].file_id
-            await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
-    kb = [[InlineKeyboardButton("➕ Ещё экземпляр", callback_data="adm_add_more")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
-    await update.message.reply_text("✅ Фото добавлено! Добавить ещё экземпляр или завершить?", reply_markup=InlineKeyboardMarkup(kb))
-    return ADD_DELIVERY_PHOTO
-
-async def adm_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    kb = [[InlineKeyboardButton("➕ Ещё экземпляр", callback_data="adm_add_more")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
-    await q.edit_message_text("Добавить ещё экземпляр или завершить?", reply_markup=InlineKeyboardMarkup(kb))
-    return ADD_DELIVERY_PHOTO
-
-async def adm_add_more(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    await q.edit_message_text("📝 Введите текст для следующего экземпляра:"); return ADD_DELIVERY_TEXT
-
-async def adm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    if "new" in context.user_data and context.user_data["new"] and "name" in context.user_data["new"]:
-        return await _save_new_product(update, context, query=q)
-    else:
-        await q.edit_message_text("✅ Экземпляры добавлены!", reply_markup=admin_main_keyboard())
-        return ConversationHandler.END
-
-async def _save_new_product(update, context, query=None):
-    global PRODUCTS
-    np = context.user_data.pop("new"); np["id"] = get_next_id(); PRODUCTS.append(np)
-    await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
-    text = f"✅ Товар *{np['name']}* успешно добавлен! (экземпляров: {len(np.get('items',[]))})"
-    if query: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
-    else: await update.message.reply_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
+            storage(PRODUCTS_FILE, PRODUCTS)
+    await update.message.reply_text("✅ Товар добавлен!", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
-
-async def adm_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for k in ("new", "edit_product_id", "edit_field"): context.user_data.pop(k, None)
-    await update.message.reply_text("❌ Отменено.", reply_markup=admin_main_keyboard())
-    return ConversationHandler.END
-
-async def adm_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    if not is_admin(q.from_user.id): return
-    if not PRODUCTS: await q.edit_message_text("📋 Нет товаров.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
-    kb = [[InlineKeyboardButton(f"{p['name']} ({len(p.get('items',[]))} шт.)", callback_data=f"esel_{p['id']}")] for p in PRODUCTS]
-    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="adm_cancel_cb")])
-    await q.edit_message_text("✏️ Выберите товар для редактирования:", reply_markup=InlineKeyboardMarkup(kb))
-    return EDIT_SELECT
 
 async def adm_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
@@ -417,11 +356,11 @@ async def adm_edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     f, pid = q.data.split("_", 1)[1], context.user_data.get("edit_id")
     if f == "delete":
-        PRODUCTS = [p for p in PRODUCTS if p["id"] != pid]; await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
+        PRODUCTS = [p for p in PRODUCTS if p["id"] != pid]; storage(PRODUCTS_FILE, PRODUCTS)
         await q.edit_message_text("🗑 Товар удалён.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
     if f == "add_item":
         context.user_data.pop("new", None)
-        await q.edit_message_text("📝 Введите текст для нового экземпляра:")
+        await q.edit_message_text("📝 Введите ссылку для нового экземпляра:")
         return ADD_DELIVERY_TEXT
     context.user_data["edit_field"] = f
     await q.edit_message_text("📝 Введите новое значение:" if f != "price" else "💰 Введите новую цену (число):")
@@ -436,8 +375,31 @@ async def adm_edit_value_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         try: v = int(v)
         except: await update.message.reply_text("⚠️ Цена должна быть числом!"); return EDIT_VALUE_TEXT
     p[context.user_data["edit_field"]] = v
-    await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
+    storage(PRODUCTS_FILE, PRODUCTS)
     await update.message.reply_text("✅ Сохранено!", reply_markup=admin_main_keyboard())
+    return ConversationHandler.END
+
+async def adm_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for k in ("new", "edit_product_id", "edit_field"): context.user_data.pop(k, None)
+    await update.message.reply_text("❌ Отменено.", reply_markup=admin_main_keyboard())
+    return ConversationHandler.END
+
+async def adm_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    if not is_admin(q.from_user.id): return
+    if not PRODUCTS: await q.edit_message_text("📋 Нет товаров.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
+    kb = [[InlineKeyboardButton(f"{p['name']} ({len(p.get('items',[]))} шт.)", callback_data=f"esel_{p['id']}")] for p in PRODUCTS]
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="adm_cancel_cb")])
+    await q.edit_message_text("✏️ Выберите товар для редактирования:", reply_markup=InlineKeyboardMarkup(kb))
+    return EDIT_SELECT
+
+async def _save_new_product(update, context, query=None):
+    global PRODUCTS
+    np = context.user_data.pop("new"); np["id"] = get_next_id(); PRODUCTS.append(np)
+    storage(PRODUCTS_FILE, PRODUCTS)
+    text = f"✅ Товар *{np['name']}* успешно добавлен! (экземпляров: {len(np.get('items',[]))})"
+    if query: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
+    else: await update.message.reply_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
 async def adm_cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -446,30 +408,14 @@ async def adm_cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text("⚙️ *Админ-панель*\n\nВыберите действие:", parse_mode="Markdown", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
-async def init_data(app):
-    global PRODUCTS, pending_orders, SALES
-    products = await jsonbin_read(JSONBIN_PRODUCTS_ID)
-    if products:
-        PRODUCTS = products
-    pending = await jsonbin_read(JSONBIN_PENDING_ID)
-    if pending:
-        pending_orders = pending
-    sales = await jsonbin_read(JSONBIN_SALES_ID)
-    if sales:
-        SALES = sales
-
 def main():
-    app = Application.builder().token(BOT_TOKEN).post_init(init_data).build()
+    app = Application.builder().token(BOT_TOKEN).build()
 
     add_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(adm_add_start, pattern="^adm_add$")],
         states={ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_name)],
                 ADD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_price)],
-                ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)],
-                ADD_DELIVERY_PHOTO: [MessageHandler(filters.PHOTO, adm_add_delivery_photo),
-                                     CallbackQueryHandler(adm_skip_photo, pattern="^adm_skip_photo$"),
-                                     CallbackQueryHandler(adm_add_more, pattern="^adm_add_more$"),
-                                     CallbackQueryHandler(adm_finish, pattern="^adm_finish$")]},
+                ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)]},
         fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")], per_message=False)
 
     edit_conv = ConversationHandler(
@@ -477,11 +423,7 @@ def main():
         states={EDIT_SELECT: [CallbackQueryHandler(adm_edit_select, pattern="^esel_")],
                 EDIT_FIELD: [CallbackQueryHandler(adm_edit_field, pattern="^ef_"), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")],
                 EDIT_VALUE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_edit_value_text)],
-                ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)],
-                ADD_DELIVERY_PHOTO: [MessageHandler(filters.PHOTO, adm_add_delivery_photo),
-                                     CallbackQueryHandler(adm_skip_photo, pattern="^adm_skip_photo$"),
-                                     CallbackQueryHandler(adm_add_more, pattern="^adm_add_more$"),
-                                     CallbackQueryHandler(adm_finish, pattern="^adm_finish$")]},
+                ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)]},
         fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")], per_message=False)
 
     handlers = [
