@@ -1,4 +1,5 @@
 import os
+import import os
 import asyncio
 import time
 import json
@@ -420,7 +421,7 @@ async def adm_edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
         PRODUCTS = [p for p in PRODUCTS if p["id"] != pid]; await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
         await q.edit_message_text("🗑 Товар удалён.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
     if f == "add_item":
-        context.user_data.pop("new", None)  # убираем флаг нового товара
+        context.user_data.pop("new", None)
         await q.edit_message_text("📝 Введите текст для нового экземпляра:")
         return ADD_DELIVERY_TEXT
     context.user_data["edit_field"] = f
@@ -446,20 +447,20 @@ async def adm_cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text("⚙️ *Админ-панель*\n\nВыберите действие:", parse_mode="Markdown", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
-async def load_data():
+async def init_data(app):
     global PRODUCTS, pending_orders, SALES
-    products_data = await jsonbin_read(JSONBIN_PRODUCTS_ID)
-    if products_data:
-        PRODUCTS = products_data
-    pending_data = await jsonbin_read(JSONBIN_PENDING_ID)
-    if pending_data:
-        pending_orders = pending_data
-    sales_data = await jsonbin_read(JSONBIN_SALES_ID)
-    if sales_data:
-        SALES = sales_data
+    products = await jsonbin_read(JSONBIN_PRODUCTS_ID)
+    if products:
+        PRODUCTS = products
+    pending = await jsonbin_read(JSONBIN_PENDING_ID)
+    if pending:
+        pending_orders = pending
+    sales = await jsonbin_read(JSONBIN_SALES_ID)
+    if sales:
+        SALES = sales
 
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(init_data).build()
 
     add_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(adm_add_start, pattern="^adm_add$")],
@@ -495,12 +496,6 @@ def main():
         CallbackQueryHandler(show_my_orders, pattern="^my_orders$"), CallbackQueryHandler(back_to_start, pattern="^back$")
     ]
     for h in handlers: app.add_handler(h)
-
-# Загружаем данные из JsonBin при старте
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(load_data())
-    loop.close()
 
     for uid in list(pending_orders.keys()):
         asyncio.create_task(check_payment_loop(int(uid), app))
