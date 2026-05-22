@@ -496,9 +496,11 @@ def main():
     ]
     for h in handlers: app.add_handler(h)
 
-    # Загружаем данные из JsonBin при старте
-    import asyncio as _asyncio
-    _asyncio.get_event_loop().run_until_complete(load_data())
+# Загружаем данные из JsonBin при старте
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(load_data())
+    loop.close()
 
     for uid in list(pending_orders.keys()):
         asyncio.create_task(check_payment_loop(int(uid), app))
