@@ -55,8 +55,8 @@ pending_orders = storage(PENDING_FILE) or {}
 SALES = storage(SALES_FILE) or []
 user_carts = {}
 
-(ADD_NAME, ADD_PRICE, ADD_DELIVERY_TEXT, ADD_DELIVERY_PHOTO,
- EDIT_SELECT, EDIT_FIELD, EDIT_VALUE_TEXT, EDIT_VALUE_PHOTO) = range(8)
+(ADD_NAME, ADD_PRICE, ADD_CATALOG_PHOTO, ADD_DELIVERY_TEXT, ADD_DELIVERY_PHOTO,
+ EDIT_SELECT, EDIT_FIELD, EDIT_VALUE_TEXT, EDIT_VALUE_PHOTO) = range(9)
 
 SATOSHI, ORDER_TIMEOUT = 100_000_000, 3600
 
@@ -120,16 +120,44 @@ async def show_catalog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not PRODUCTS:
         await q.edit_message_text("😔 Товаров пока нет.", reply_markup=InlineKeyboardMarkup([[HOME_BTN]])); return
-    text, kb = "🛍 *Наши товары:*\n", []
     for p in PRODUCTS:
         n = len(p.get("items", []))
-        text += f"\n▫ *{p['name']}* — {p['price']} руб. (в наличии: {n})"
-        kb.append([InlineKeyboardButton(f"➕ {p['name']} ({p['price']} ₽)", callback_data=f"add_{p['id']}")])
-    kb.append([HOME_BTN])
-    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        text = f"🛍 *{p['name']}* — {p['price']} руб. (в наличии: {n})"
+        kb = [[InlineKeyboardButton(f"➕ Добавить в корзину", callback_data=f"add_{p['id']}")], [InlineKeyboardButton("▶ Следующий товар", callback_data=f"next_{p['id']}")], [HOME_BTN]]
+        if p.get("catalog_photo"):
+            try:
+                await q.message.reply_photo(photo=p["catalog_photo"], caption=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            except:
+                await q.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            await q.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    await q.message.delete()
+
+async def next_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    pid = q.data.split("_", 1)[1]
+    idx = next((i for i, p in enumerate(PRODUCTS) if p["id"] == pid), -1)
+    if idx == -1:
+        await q.answer("Товар не найден!")
+        return
+    next_idx = (idx + 1) % len(PRODUCTS)
+    p = PRODUCTS[next_idx]
+    n = len(p.get("items", []))
+    text = f"🛍 *{p['name']}* — {p['price']} руб. (в наличии: {n})"
+    kb = [[InlineKeyboardButton(f"➕ Добавить в корзину", callback_data=f"add_{p['id']}")], [InlineKeyboardButton("▶ Следующий товар", callback_data=f"next_{p['id']}")], [HOME_BTN]]
+    if p.get("catalog_photo"):
+        try:
+            await q.message.reply_photo(photo=p["catalog_photo"], caption=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        except:
+            await q.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    else:
+        await q.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    await q.message.delete()
 
 async def add_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; p = next((p for p in PRODUCTS if p["id"] == q.data.split("_", 1)[1]), None)
+    q = update.callback_query
+    pid = q.data.split("_", 1)[1]
+    p = next((p for p in PRODUCTS if p["id"] == pid), None)
     if not p: await q.answer("❌ Товар не найден!"); return
     user_carts.setdefault(q.from_user.id, []).append(p)
     await q.answer(f"✅ {p['name']} добавлен в корзину!")
@@ -138,7 +166,7 @@ async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     cart = user_carts.get(q.from_user.id, [])
     if not cart:
-        await q.edit_message_text("🛒 Корзина пуста.\n\nДобавьте товары из каталога.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 В каталог", callback_data="catalog")], [HOME_BTN]])); return
+        await q.edit_message_text("🛒 Корзина пуста.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 В каталог", callback_data="catalog")], [HOME_BTN]])); return
     total = sum(p["price"] for p in cart)
     text = "🛒 *Ваша корзина:*\n" + "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in cart) + f"\n\n💰 *Итого: {total} руб.*"
     kb = [[InlineKeyboardButton("🛍 Продолжить покупки", callback_data="catalog")],
@@ -158,10 +186,7 @@ async def deliver(uid, product, context):
     else:
         text, photo = f"🎁 Товар «{product['name']}»!", None
     if photo:
-        if photo.startswith("http"):
-            await context.bot.send_photo(chat_id=uid, photo=photo, caption=text)
-        else:
-            await context.bot.send_photo(chat_id=uid, photo=photo, caption=text)
+        await context.bot.send_photo(chat_id=uid, photo=photo, caption=text)
     else:
         await context.bot.send_message(chat_id=uid, text=text)
 
@@ -308,20 +333,36 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]))
 
+# ─── АДМИНКА С ФОТО ДЛЯ КАТАЛОГА ────────────────────────────────────────
+
 async def adm_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not is_admin(q.from_user.id): return
-    context.user_data["new"] = {"items": []}
-    await q.edit_message_text("➕ *Добавление товара*\n\nШаг 1/3 — Введите название товара:", parse_mode="Markdown"); return ADD_NAME
+    context.user_data["new"] = {"items": [], "catalog_photo": None}
+    await q.edit_message_text("➕ *Добавление товара*\n\nШаг 1/4 — Введите название:", parse_mode="Markdown")
+    return ADD_NAME
 
 async def adm_add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["new"]["name"] = update.message.text.strip()
-    await update.message.reply_text("Шаг 2/3 — Введите цену в рублях (только число):"); return ADD_PRICE
+    await update.message.reply_text("Шаг 2/4 — Введите цену в рублях:")
+    return ADD_PRICE
 
 async def adm_add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: context.user_data["new"]["price"] = int(update.message.text.strip())
     except: await update.message.reply_text("⚠️ Цена должна быть числом. Введите ещё раз:"); return ADD_PRICE
-    await update.message.reply_text("Шаг 3/3 — Введите ссылку на товар:"); return ADD_DELIVERY_TEXT
+    kb = [[InlineKeyboardButton("⏭ Пропустить", callback_data="adm_skip_catalog_photo")]]
+    await update.message.reply_text("Шаг 3/4 — Отправьте фото для каталога:", reply_markup=InlineKeyboardMarkup(kb))
+    return ADD_CATALOG_PHOTO
+
+async def adm_catalog_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["new"]["catalog_photo"] = update.message.photo[-1].file_id
+    await update.message.reply_text("Шаг 4/4 — Введите текст для экземпляра:")
+    return ADD_DELIVERY_TEXT
+
+async def adm_skip_catalog_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    await q.edit_message_text("Шаг 4/4 — Введите текст для экземпляра:")
+    return ADD_DELIVERY_TEXT
 
 async def adm_add_delivery_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -333,7 +374,51 @@ async def adm_add_delivery_text(update: Update, context: ContextTypes.DEFAULT_TY
         if product:
             product.setdefault("items", []).append({"text": text, "photo": None})
             storage(PRODUCTS_FILE, PRODUCTS)
-    await update.message.reply_text("✅ Товар добавлен!", reply_markup=admin_main_keyboard())
+    kb = [[InlineKeyboardButton("⏭ Пропустить фото", callback_data="adm_skip_photo")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
+    await update.message.reply_text("🖼 Отправьте фото для экземпляра или нажмите «Пропустить»:", reply_markup=InlineKeyboardMarkup(kb))
+    return ADD_DELIVERY_PHOTO
+
+async def adm_add_delivery_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if "new" in context.user_data and context.user_data["new"] and "name" in context.user_data["new"]:
+        context.user_data["new"]["items"][-1]["photo"] = update.message.photo[-1].file_id
+    else:
+        prod_id = context.user_data.get("edit_id")
+        product = next((p for p in PRODUCTS if p["id"] == prod_id), None)
+        if product and product.get("items"):
+            product["items"][-1]["photo"] = update.message.photo[-1].file_id
+            storage(PRODUCTS_FILE, PRODUCTS)
+    kb = [[InlineKeyboardButton("➕ Ещё экземпляр", callback_data="adm_add_more")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
+    await update.message.reply_text("✅ Фото добавлено! Добавить ещё экземпляр или завершить?", reply_markup=InlineKeyboardMarkup(kb))
+    return ADD_DELIVERY_PHOTO
+
+async def adm_skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    kb = [[InlineKeyboardButton("➕ Ещё экземпляр", callback_data="adm_add_more")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
+    await q.edit_message_text("Добавить ещё экземпляр или завершить?", reply_markup=InlineKeyboardMarkup(kb))
+    return ADD_DELIVERY_PHOTO
+
+async def adm_add_more(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    await q.edit_message_text("📝 Введите текст для следующего экземпляра:")
+    return ADD_DELIVERY_TEXT
+
+async def adm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    if "new" in context.user_data and context.user_data["new"] and "name" in context.user_data["new"]:
+        return await _save_new_product(update, context, query=q)
+    else:
+        await q.edit_message_text("✅ Экземпляры добавлены!", reply_markup=admin_main_keyboard())
+        return ConversationHandler.END
+
+async def _save_new_product(update, context, query=None):
+    global PRODUCTS
+    np = context.user_data.pop("new")
+    np["id"] = get_next_id()
+    PRODUCTS.append(np)
+    storage(PRODUCTS_FILE, PRODUCTS)
+    text = f"✅ Товар *{np['name']}* успешно добавлен! (экземпляров: {len(np.get('items',[]))})"
+    if query: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
+    else: await update.message.reply_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
 async def adm_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -360,7 +445,7 @@ async def adm_edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("🗑 Товар удалён.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
     if f == "add_item":
         context.user_data.pop("new", None)
-        await q.edit_message_text("📝 Введите ссылку для нового экземпляра:")
+        await q.edit_message_text("📝 Введите текст для нового экземпляра:")
         return ADD_DELIVERY_TEXT
     context.user_data["edit_field"] = f
     await q.edit_message_text("📝 Введите новое значение:" if f != "price" else "💰 Введите новую цену (число):")
@@ -379,11 +464,6 @@ async def adm_edit_value_text(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("✅ Сохранено!", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
-async def adm_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for k in ("new", "edit_product_id", "edit_field"): context.user_data.pop(k, None)
-    await update.message.reply_text("❌ Отменено.", reply_markup=admin_main_keyboard())
-    return ConversationHandler.END
-
 async def adm_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
     if not is_admin(q.from_user.id): return
@@ -393,13 +473,9 @@ async def adm_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text("✏️ Выберите товар для редактирования:", reply_markup=InlineKeyboardMarkup(kb))
     return EDIT_SELECT
 
-async def _save_new_product(update, context, query=None):
-    global PRODUCTS
-    np = context.user_data.pop("new"); np["id"] = get_next_id(); PRODUCTS.append(np)
-    storage(PRODUCTS_FILE, PRODUCTS)
-    text = f"✅ Товар *{np['name']}* успешно добавлен! (экземпляров: {len(np.get('items',[]))})"
-    if query: await query.edit_message_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
-    else: await update.message.reply_text(text, parse_mode="Markdown", reply_markup=admin_main_keyboard())
+async def adm_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for k in ("new", "edit_product_id", "edit_field"): context.user_data.pop(k, None)
+    await update.message.reply_text("❌ Отменено.", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
 async def adm_cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -415,7 +491,13 @@ def main():
         entry_points=[CallbackQueryHandler(adm_add_start, pattern="^adm_add$")],
         states={ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_name)],
                 ADD_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_price)],
-                ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)]},
+                ADD_CATALOG_PHOTO: [MessageHandler(filters.PHOTO, adm_catalog_photo),
+                                    CallbackQueryHandler(adm_skip_catalog_photo, pattern="^adm_skip_catalog_photo$")],
+                ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)],
+                ADD_DELIVERY_PHOTO: [MessageHandler(filters.PHOTO, adm_add_delivery_photo),
+                                     CallbackQueryHandler(adm_skip_photo, pattern="^adm_skip_photo$"),
+                                     CallbackQueryHandler(adm_add_more, pattern="^adm_add_more$"),
+                                     CallbackQueryHandler(adm_finish, pattern="^adm_finish$")]},
         fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")], per_message=False)
 
     edit_conv = ConversationHandler(
@@ -423,14 +505,19 @@ def main():
         states={EDIT_SELECT: [CallbackQueryHandler(adm_edit_select, pattern="^esel_")],
                 EDIT_FIELD: [CallbackQueryHandler(adm_edit_field, pattern="^ef_"), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")],
                 EDIT_VALUE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_edit_value_text)],
-                ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)]},
+                ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)],
+                ADD_DELIVERY_PHOTO: [MessageHandler(filters.PHOTO, adm_add_delivery_photo),
+                                     CallbackQueryHandler(adm_skip_photo, pattern="^adm_skip_photo$"),
+                                     CallbackQueryHandler(adm_add_more, pattern="^adm_add_more$"),
+                                     CallbackQueryHandler(adm_finish, pattern="^adm_finish$")]},
         fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")], per_message=False)
 
     handlers = [
         CommandHandler("start", start), add_conv, edit_conv,
         CallbackQueryHandler(admin_panel, pattern="^admin_panel$"), CallbackQueryHandler(admin_list, pattern="^adm_list$"),
         CallbackQueryHandler(admin_stats, pattern="^adm_stats$"),
-        CallbackQueryHandler(show_catalog, pattern="^catalog$"), CallbackQueryHandler(add_to_cart, pattern="^add_"),
+        CallbackQueryHandler(show_catalog, pattern="^catalog$"), CallbackQueryHandler(next_product, pattern="^next_"),
+        CallbackQueryHandler(add_to_cart, pattern="^add_"),
         CallbackQueryHandler(view_cart, pattern="^view_cart$"), CallbackQueryHandler(clear_cart, pattern="^clear_cart$"),
         CallbackQueryHandler(make_order_btc, pattern="^order_btc$"), CallbackQueryHandler(cancel_order, pattern="^cancel_order$"),
         CallbackQueryHandler(show_support, pattern="^support$"), CallbackQueryHandler(show_support, pattern="^samples$"),
