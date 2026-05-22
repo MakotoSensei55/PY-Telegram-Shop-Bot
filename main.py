@@ -330,13 +330,28 @@ async def adm_add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Шаг 3/3 — Введите текст, который получит покупатель:"); return ADD_DELIVERY_TEXT
 
 async def adm_add_delivery_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["new"]["items"].append({"text": update.message.text.strip(), "photo": None})
+    text = update.message.text.strip()
+    if "new" in context.user_data and context.user_data["new"] and "name" in context.user_data["new"]:
+        context.user_data["new"]["items"].append({"text": text, "photo": None})
+    else:
+        prod_id = context.user_data.get("edit_id")
+        product = next((p for p in PRODUCTS if p["id"] == prod_id), None)
+        if product:
+            product.setdefault("items", []).append({"text": text, "photo": None})
+            await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
     kb = [[InlineKeyboardButton("⏭ Пропустить фото", callback_data="adm_skip_photo")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
     await update.message.reply_text("🖼 Отправьте фото или нажмите «Пропустить»:", reply_markup=InlineKeyboardMarkup(kb))
     return ADD_DELIVERY_PHOTO
 
 async def adm_add_delivery_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["new"]["items"][-1]["photo"] = update.message.photo[-1].file_id
+    if "new" in context.user_data and context.user_data["new"] and "name" in context.user_data["new"]:
+        context.user_data["new"]["items"][-1]["photo"] = update.message.photo[-1].file_id
+    else:
+        prod_id = context.user_data.get("edit_id")
+        product = next((p for p in PRODUCTS if p["id"] == prod_id), None)
+        if product and product.get("items"):
+            product["items"][-1]["photo"] = update.message.photo[-1].file_id
+            await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
     kb = [[InlineKeyboardButton("➕ Ещё экземпляр", callback_data="adm_add_more")], [InlineKeyboardButton("✅ Завершить", callback_data="adm_finish")]]
     await update.message.reply_text("✅ Фото добавлено! Добавить ещё экземпляр или завершить?", reply_markup=InlineKeyboardMarkup(kb))
     return ADD_DELIVERY_PHOTO
@@ -353,7 +368,11 @@ async def adm_add_more(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def adm_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    return await _save_new_product(update, context, query=q)
+    if "new" in context.user_data and context.user_data["new"] and "name" in context.user_data["new"]:
+        return await _save_new_product(update, context, query=q)
+    else:
+        await q.edit_message_text("✅ Экземпляры добавлены!", reply_markup=admin_main_keyboard())
+        return ConversationHandler.END
 
 async def _save_new_product(update, context, query=None):
     global PRODUCTS
@@ -383,8 +402,13 @@ async def adm_edit_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = next((p for p in PRODUCTS if p["id"] == q.data.split("_", 1)[1]), None)
     if not p: await q.answer("❌ Товар не найден!"); return ConversationHandler.END
     context.user_data["edit_id"] = p["id"]
-    kb = [[InlineKeyboardButton("📝 Название", callback_data="ef_name")], [InlineKeyboardButton("💰 Цена", callback_data="ef_price")],
-          [InlineKeyboardButton("🗑 Удалить", callback_data="ef_delete")], [InlineKeyboardButton("🔙 Назад", callback_data="adm_cancel_cb")]]
+    kb = [
+        [InlineKeyboardButton("📝 Название", callback_data="ef_name")],
+        [InlineKeyboardButton("💰 Цена", callback_data="ef_price")],
+        [InlineKeyboardButton("➕ Добавить экземпляр", callback_data="ef_add_item")],
+        [InlineKeyboardButton("🗑 Удалить", callback_data="ef_delete")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="adm_cancel_cb")],
+    ]
     await q.edit_message_text(f"✏️ *{p['name']}* — {p['price']} руб. ({len(p.get('items',[]))} шт.)\n\nЧто изменить?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     return EDIT_FIELD
 
@@ -395,6 +419,10 @@ async def adm_edit_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if f == "delete":
         PRODUCTS = [p for p in PRODUCTS if p["id"] != pid]; await jsonbin_write(JSONBIN_PRODUCTS_ID, PRODUCTS)
         await q.edit_message_text("🗑 Товар удалён.", reply_markup=admin_main_keyboard()); return ConversationHandler.END
+    if f == "add_item":
+        context.user_data.pop("new", None)  # убираем флаг нового товара
+        await q.edit_message_text("📝 Введите текст для нового экземпляра:")
+        return ADD_DELIVERY_TEXT
     context.user_data["edit_field"] = f
     await q.edit_message_text("📝 Введите новое значение:" if f != "price" else "💰 Введите новую цену (число):")
     return EDIT_VALUE_TEXT
@@ -436,7 +464,12 @@ def main():
         entry_points=[CallbackQueryHandler(adm_edit_start, pattern="^adm_edit$")],
         states={EDIT_SELECT: [CallbackQueryHandler(adm_edit_select, pattern="^esel_")],
                 EDIT_FIELD: [CallbackQueryHandler(adm_edit_field, pattern="^ef_"), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")],
-                EDIT_VALUE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_edit_value_text)]},
+                EDIT_VALUE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_edit_value_text)],
+                ADD_DELIVERY_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_add_delivery_text)],
+                ADD_DELIVERY_PHOTO: [MessageHandler(filters.PHOTO, adm_add_delivery_photo),
+                                     CallbackQueryHandler(adm_skip_photo, pattern="^adm_skip_photo$"),
+                                     CallbackQueryHandler(adm_add_more, pattern="^adm_add_more$"),
+                                     CallbackQueryHandler(adm_finish, pattern="^adm_finish$")]},
         fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")], per_message=False)
 
     handlers = [
