@@ -446,6 +446,18 @@ async def adm_cancel_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text("⚙️ *Админ-панель*\n\nВыберите действие:", parse_mode="Markdown", reply_markup=admin_main_keyboard())
     return ConversationHandler.END
 
+async def load_data():
+    global PRODUCTS, pending_orders, SALES
+    products_data = await jsonbin_read(JSONBIN_PRODUCTS_ID)
+    if products_data:
+        PRODUCTS = products_data
+    pending_data = await jsonbin_read(JSONBIN_PENDING_ID)
+    if pending_data:
+        pending_orders = pending_data
+    sales_data = await jsonbin_read(JSONBIN_SALES_ID)
+    if sales_data:
+        SALES = sales_data
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -483,6 +495,10 @@ def main():
         CallbackQueryHandler(show_my_orders, pattern="^my_orders$"), CallbackQueryHandler(back_to_start, pattern="^back$")
     ]
     for h in handlers: app.add_handler(h)
+
+    # Загружаем данные из JsonBin при старте
+    import asyncio as _asyncio
+    _asyncio.get_event_loop().run_until_complete(load_data())
 
     for uid in list(pending_orders.keys()):
         asyncio.create_task(check_payment_loop(int(uid), app))
