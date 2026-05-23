@@ -40,6 +40,7 @@ REVIEWS_LINK = "https://t.me/yamadarew?direct"
 PRODUCTS_FILE = "products.json"
 PENDING_FILE = "pending_orders.json"
 SALES_FILE = "sales.json"
+CARTS_FILE = "carts.json"
 
 def storage(filename, data=None):
     if data is not None:
@@ -53,7 +54,7 @@ def storage(filename, data=None):
 PRODUCTS = storage(PRODUCTS_FILE) or []
 pending_orders = storage(PENDING_FILE) or {}
 SALES = storage(SALES_FILE) or []
-user_carts = {}
+user_carts = storage(CARTS_FILE) or {}
 
 (ADD_NAME, ADD_PRICE, ADD_DELIVERY_TEXT, ADD_DELIVERY_PHOTO,
  EDIT_SELECT, EDIT_FIELD, EDIT_VALUE_TEXT, EDIT_VALUE_PHOTO) = range(8)
@@ -132,6 +133,7 @@ async def add_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; p = next((p for p in PRODUCTS if p["id"] == q.data.split("_", 1)[1]), None)
     if not p: await q.answer("❌ Товар не найден!"); return
     user_carts.setdefault(q.from_user.id, []).append(p)
+    storage(CARTS_FILE, user_carts)
     await q.answer(f"✅ {p['name']} добавлен в корзину!")
 
 async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,7 +149,9 @@ async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 async def clear_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer("🗑 Корзина очищена"); user_carts[q.from_user.id] = []
+    q = update.callback_query; await q.answer("🗑 Корзина очищена")
+    user_carts[q.from_user.id] = []
+    storage(CARTS_FILE, user_carts)
     await q.edit_message_text("🛒 Корзина очищена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 В каталог", callback_data="catalog")], [HOME_BTN]]))
 
 async def deliver(uid, product, context):
@@ -173,6 +177,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = sum(p["price"] for p in cart)
     if total == 0:
         user_carts[uid] = []
+        storage(CARTS_FILE, user_carts)
         for p in cart: await deliver(uid, p, context)
         for aid in ADMIN_IDS:
             try:
@@ -191,7 +196,9 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_address = get_address_for_order()
     sat = btc_to_satoshi(btc); base = await get_received_satoshi(order_address)
     pending_orders[str(uid)] = {"amount_btc": btc, "amount_rub": total, "cart": list(cart), "created_at": time.time(), "expected_satoshi": sat, "baseline_satoshi": base if base >= 0 else 0, "address": order_address}
-    storage(PENDING_FILE, pending_orders); user_carts[uid] = []
+    storage(PENDING_FILE, pending_orders)
+    user_carts[uid] = []
+    storage(CARTS_FILE, user_carts)
     await q.edit_message_text(
         f"₿ *Оплата Bitcoin*\n\n"
         f"Сумма к оплате:\n`{btc:.8f}` BTC\n\n"
@@ -304,8 +311,6 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += f"📦 Товаров в каталоге: {len(PRODUCTS)}\n"
     
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]))
-
-# ─── РАБОЧАЯ АДМИНКА ────────────────────────────────────────────────────
 
 async def adm_add_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
