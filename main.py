@@ -199,16 +199,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     storage(PENDING_FILE, pending_orders)
     user_carts[uid] = []
     storage(CARTS_FILE, user_carts)
-    await q.edit_message_text(
-        f"₿ *Оплата Bitcoin*\n\n"
-        f"Сумма к оплате:\n`{btc:.8f}` BTC\n\n"
-        f"💱 Курс: 1 BTC ≈ {rate:,.0f} ₽\n"
-        f"🛒 Итого: {total} ₽\n\n"
-        f"👇 Адрес кошелька — в следующем сообщении\n\n"
-        f"⏳ Бот проверяет оплату каждые 30 сек.\n"
-        f"Товар будет отправлен после подтверждения.\n"
-        f"Время ожидания: до 60 минут.",
-        parse_mode="Markdown",
+    await context.bot.send_message(chat_id=uid, text=f"ℹ️ *Инструкция по оплате:*\n\n1️⃣ Отправьте `{btc:.8f}` BTC на адрес выше\n2️⃣ Если обменник отправил чуть меньше — не страшно, бот примет платёж с разницей до 5%\n3️⃣ Бот проверяет каждые 30 сек.\n4️⃣ Товар будет отправлен *сразу после обнаружения транзакции*\n\n⚡ *Скорость: до 1 минуты*", parse_mode="Markdown")
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]]))
     await context.bot.send_message(chat_id=uid, text=order_address)
     await context.bot.send_message(chat_id=uid, text=f"ℹ️ *Инструкция по оплате:*\n\n1️⃣ Отправьте точно `{btc:.8f}` BTC на адрес выше\n2️⃣ Бот проверяет каждые 30 сек.\n3️⃣ Товар будет отправлен *сразу после обнаружения транзакции*\n\n⚡ *Скорость: до 1 минуты*", parse_mode="Markdown")
