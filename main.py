@@ -19,7 +19,7 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 BITCOIN_ADDRESS = os.getenv("BITCOIN_ADDRESS", "")
 BITCOIN_ADDRESS_2 = os.getenv("BITCOIN_ADDRESS_2", "")
 REVIEWS_LINK = "https://t.me/yamadarew?direct"
-PRODUCTS_FILE, PENDING_FILE, SALES_FILE, CARTS_FILE = "products.json", "pending_orders.json", "sales.json", "carts.json"
+PRODUCTS_FILE, PENDING_FILE, SALES_FILE, CARTS_FILE, PROMO_FILE = "products.json", "pending_orders.json", "sales.json", "carts.json", "promo.json"
 
 def storage(f, d=None):
     if d is not None:
@@ -32,9 +32,10 @@ PRODUCTS = storage(PRODUCTS_FILE) or []
 pending_orders = storage(PENDING_FILE) or {}
 SALES = storage(SALES_FILE) or []
 user_carts = storage(CARTS_FILE) or {}
+PROMOS = storage(PROMO_FILE) or {}
 
 (ADD_NAME, ADD_PRICE, ADD_DELIVERY_TEXT, ADD_DELIVERY_PHOTO,
- EDIT_SELECT, EDIT_FIELD, EDIT_VALUE_TEXT, EDIT_VALUE_PHOTO) = range(8)
+ EDIT_SELECT, EDIT_FIELD, EDIT_VALUE_TEXT, EDIT_VALUE_PHOTO, PROMO_ENTER) = range(9)
 SATOSHI, ORDER_TIMEOUT = 100_000_000, 3600
 
 def get_next_id(): return str(max(int(p["id"]) for p in PRODUCTS) + 1) if PRODUCTS else "1"
@@ -68,7 +69,7 @@ def main_menu_keyboard(uid):
     k = [
         [InlineKeyboardButton("🛍 Каталог", callback_data="catalog"), InlineKeyboardButton("🛒 Корзина", callback_data="view_cart")],
         [InlineKeyboardButton("📋 Мои заказы", callback_data="my_orders"), InlineKeyboardButton("🎁 Пробники", callback_data="samples")],
-        [InlineKeyboardButton("💬 Отзывы", url=REVIEWS_LINK), InlineKeyboardButton("🆘 Поддержка", callback_data="support")],
+        [InlineKeyboardButton("🎫 Промокод", callback_data="promo_code"), InlineKeyboardButton("🆘 Поддержка", callback_data="support")],
     ]
     if is_admin(uid): k.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(k)
@@ -109,6 +110,12 @@ async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text("🛒 Корзина пуста.\n\nДобавьте товары из каталога.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 В каталог", callback_data="catalog")], [HOME_BTN]])); return
     total = sum(p["price"] for p in cart)
     text = "🛒 *Ваша корзина:*\n" + "\n".join(f"▫ {p['name']} — {p['price']} руб." for p in cart) + f"\n\n💰 *Итого: {total} руб.*"
+    promo_code = context.user_data.get("promo_code")
+    if promo_code:
+        discount = PROMOS.get(promo_code, 0)
+        total = int(total * (100 - discount) / 100)
+        text += f"\n\n🎫 Промокод *{promo_code}* (-{discount}%)\n💰 *Итого со скидкой: {total} руб.*"
+    context.user_data["total_rub"] = total
     kb = [[InlineKeyboardButton("🛍 Продолжить покупки", callback_data="catalog")],
           [InlineKeyboardButton("₿ Оплатить Bitcoin", callback_data="order_btc")],
           [InlineKeyboardButton("🗑 Очистить корзину", callback_data="clear_cart")], [HOME_BTN]]
@@ -117,6 +124,7 @@ async def view_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def clear_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer("🗑 Корзина очищена")
     user_carts[q.from_user.id] = []; storage(CARTS_FILE, user_carts)
+    context.user_data.pop("promo_code", None); context.user_data.pop("total_rub", None)
     await q.edit_message_text("🛒 Корзина очищена.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛍 В каталог", callback_data="catalog")], [HOME_BTN]]))
 
 async def deliver(uid, product, context):
@@ -136,7 +144,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         o = pending_orders[str(uid)]
         await q.edit_message_text(f"⏳ *У вас уже есть активный заказ*\n\nСумма: `{o['amount_btc']:.8f}` BTC\n\nАдрес кошелька отправлен отдельным сообщением выше.\nОжидаю поступления средств...", parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]])); return
-    total = sum(p["price"] for p in cart)
+    total = context.user_data.get("total_rub", sum(p["price"] for p in cart))
     if total == 0:
         user_carts[uid] = []; storage(CARTS_FILE, user_carts)
         for p in cart: await deliver(uid, p, context)
@@ -145,6 +153,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
         await q.edit_message_text("🎁 Бесплатный товар отправлен!", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
         await context.bot.send_message(chat_id=uid, text="💬 Понравился магазин? Оставьте отзыв в нашем канале!", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💬 Оставить отзыв", url=REVIEWS_LINK)]]))
+        context.user_data.pop("promo_code", None); context.user_data.pop("total_rub", None)
         return
     await q.edit_message_text("⏳ Загружаю курс Bitcoin...")
     rate = await fetch_btc_rate()
@@ -160,6 +169,7 @@ async def make_order_btc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить", callback_data="cancel_order")], [HOME_BTN]]))
     await context.bot.send_message(chat_id=uid, text=addr)
     await context.bot.send_message(chat_id=uid, text=f"ℹ️ *Инструкция по оплате:*\n\n1️⃣ Отправьте `{btc:.8f}` BTC на адрес выше\n2️⃣ Если обменник отправил чуть меньше — не страшно, бот примет платёж с разницей до 5%\n3️⃣ Бот проверяет каждые 30 сек.\n4️⃣ Товар будет отправлен *сразу после обнаружения транзакции*\n\n⚡ *Скорость: до 1 минуты*", parse_mode="Markdown")
+    context.user_data.pop("promo_code", None); context.user_data.pop("total_rub", None)
     asyncio.create_task(check_payment_loop(uid, context.application))
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -208,10 +218,46 @@ async def show_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await q.edit_message_text("🆘 *Техподдержка*\n\nЕсли у вас возникли вопросы или проблемы с заказом, пишите:\n@IchikavaAdmin", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
 
+async def promo_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    await q.edit_message_text("🎫 Введите промокод:", reply_markup=InlineKeyboardMarkup([[HOME_BTN]]))
+    return PROMO_ENTER
+
+async def promo_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    code = update.message.text.strip().upper()
+    if code in PROMOS:
+        discount = PROMOS.pop(code)
+        storage(PROMO_FILE, PROMOS)
+        context.user_data["promo_code"] = code
+        await update.message.reply_text(f"✅ Промокод *{code}* активирован! Скидка: {discount}%\nПрименится при оформлении заказа.", parse_mode="Markdown", reply_markup=main_menu_keyboard(update.effective_user.id))
+    else:
+        await update.message.reply_text("❌ Промокод не найден.", reply_markup=main_menu_keyboard(update.effective_user.id))
+    return ConversationHandler.END
+
+async def promo_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    try:
+        _, code, discount = update.message.text.split()
+        PROMOS[code.upper()] = int(discount)
+        storage(PROMO_FILE, PROMOS)
+        await update.message.reply_text(f"✅ Промокод `{code.upper()}` на {discount}% добавлен!")
+    except:
+        await update.message.reply_text("❌ Формат: /promo_add КОД СКИДКА\nПример: /promo_add SALE20 20")
+
+async def admin_promos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    if not is_admin(q.from_user.id): return
+    if PROMOS:
+        text = "🎫 *Промокоды:*\n" + "\n".join(f"▫ `{k}` — {v}%" for k, v in PROMOS.items())
+    else:
+        text = "🎫 Нет активных промокодов.\n\nДобавить: /promo_add КОД СКИДКА"
+    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]]))
+
 def admin_main_keyboard(): return InlineKeyboardMarkup([
     [InlineKeyboardButton("➕ Добавить товар", callback_data="adm_add")],
     [InlineKeyboardButton("✏️ Редактировать", callback_data="adm_edit")],
     [InlineKeyboardButton("📋 Список", callback_data="adm_list")],
+    [InlineKeyboardButton("🎫 Промокоды", callback_data="adm_promos")],
     [InlineKeyboardButton("📊 Статистика", callback_data="adm_stats")], [HOME_BTN]])
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -375,8 +421,15 @@ def main():
                 EDIT_VALUE_PHOTO: [MessageHandler(filters.PHOTO, adm_edit_value_photo)]},
         fallbacks=[MessageHandler(filters.COMMAND, adm_cancel), CallbackQueryHandler(adm_cancel_cb, pattern="^adm_cancel_cb$")], per_message=False)
 
-    handlers = [CommandHandler("start", start), add_conv, edit_conv,
+    promo_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(promo_start, pattern="^promo_code$")],
+        states={PROMO_ENTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, promo_check)]},
+        fallbacks=[CallbackQueryHandler(back_to_start, pattern="^back$")], per_message=True)
+
+    handlers = [CommandHandler("start", start), add_conv, edit_conv, promo_conv,
+        CommandHandler("promo_add", promo_add),
         CallbackQueryHandler(admin_panel, pattern="^admin_panel$"), CallbackQueryHandler(admin_list, pattern="^adm_list$"),
+        CallbackQueryHandler(admin_promos, pattern="^adm_promos$"),
         CallbackQueryHandler(admin_stats, pattern="^adm_stats$"),
         CallbackQueryHandler(show_catalog, pattern="^catalog$"), CallbackQueryHandler(add_to_cart, pattern="^add_"),
         CallbackQueryHandler(view_cart, pattern="^view_cart$"), CallbackQueryHandler(clear_cart, pattern="^clear_cart$"),
